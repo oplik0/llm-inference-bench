@@ -56,7 +56,7 @@ from rich.text import Text
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "0.4.18"
+VERSION = "0.4.19"
 
 CHARS_PER_TOKEN = 4
 DEFAULT_CALIBRATION_CACHE = "/tmp/llm_decode_bench_token_calibration_cache.json"
@@ -3804,6 +3804,125 @@ ZIY=
     """
 )
 
+LEDGER_LAVD_CSV_ZLIB_B64 = (
+    """
+eNrFXdty27iWfZ+vYHke+pwqJU0SoETpyZcknT6JE0+cPpmpqXmgKdpiTJFqkrLj+bV5mE+aXxhcCWDDhMnYVHd1xTKMy+YS
+uLHvOPqap7dZ633ab6+y+mh29CZpM++szsiP9dHscn/1PUvb2bu62s6O6L/e222SF0ezizqv6rx9mL3JdkndbrOynR29z4qd
+97Xa5SkZWu3rNJsdne3rmvzRu2yTdt+QFT4mTev9sVvzFY4uP554b/aZRxcWv14USUlJUa1nRdVka/Hb57usXu+z2XlW32Tr
+2ce8vCU/TsrmPqvJh6OTG7reSdPkNyVb4muWbI3fN+T51t5ZtS9b8uuXrNplZffrSdsm6YY+UNf0NWlu1S9ZuvH+ll97ZdV6
+7SbzqjLzUkJgXt78XSKo/71Jtpl3vyFLtBzs+6TxUg4xHfA1J39vWoKi/CUrKZmnpMvtzNvm5b7NmiPP+5dlgHA0j2dHoR9G
+rwL/VYi8YLEK41UYkgH/SAglr7wmqwlCXlKuvYx/Wfwv75NtXrRV6e0K8k1/J03HebneN22dJ0VW3uRlltXlzeuUfNefqnqb
+FOT73+2qWn6zBNesTuiXvyHPPONfSh8xXSvWW99k18m+ILvh48nRrGfop0r9TyjfZo13WifrInsgQ4IZ/S/wfw2DX8NodoRX
+yPd2WzJ1tPL5pw6oubUAWuGYIZuvb8gX8cqrrq/zNPN2qac1XybldVWTr+BUfDq+qvObTfvqpqiukuK5AAkiAECi1Q0Q7zQM
+oAXDJwg7gAILoMhaIFxFS9L1nGzGTULw2dV52ZKNTV+TPN0k9dr7LalLyipqspmP/7xryevwXETEqgAR0epGhHcahkjMEfFX
+OPIShgiDJNEhwY+sENCd+z4hb9UDgeR+k7S/NN5+5+VNs88aBdcpQYQtub2i2PBNs8mSot28ruqb5yEUhI8hFIQDEArCcQhh
+uVHIpyAytwyy5g9WISZdf6uTkr5RhP7Wq7NtxRj3m6qu2s2D9y5v0g3dNWvecEwQax7K9Lk7RywOcBGtblx4p2G4UH5DgEHd
+u4StdymECwTLFaLfznleFIQdv6JM5nA7Rq5uIiNbnciITgPZsC+2jNgoj7DhwFpgsYro9/O5yO8YMvfZVZOTUzNJ06xpvKui
+IuckEw7IIVYn3re8SKsfR7Pmnnz4IWBqyFGWPXP/SEoASqLVjRLvNOqwCjuUOq7coeRbC0QrjJjsk+Q1O9fTpPSuq2JNMOs2
+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
+MtNHVpkr67CoVgcsXaeBoYuPwAI3TGitEK2CpbSCJp00k9bZmmaGJUVzKBelSQ8AS7S6weKdxuyh/mQN7Etm7C9fIeb1oduU
+8rwuvOqPZ4szPcZj/jghyyR96qFDM9/0UTvxwrYTWwoTDqyphfdc0y3nPUF3U79BNHjI3hRu774xdJiYazEWGnNjouTDBbAo
+dQI08L8AJQxKsXCUsLsUizF0lDIQ9r87oX4uIRbWJZIWWUlPWuHy2yZpm5PdzlNuTOqCqe4TstaGJjCTT8c3NLO5X/b9kv1J
+DrZ29i276sMkYqGpTz1+ZAawuoPOehN4MFrCmVHMHYE8TkjV+BRiHNGbaZR4QyhLWJHSl44nMqkwd4ZsdUIjOo1hql1uihXa
+i1Fszb8gypcGUKVMoNPBIdYEcIhWNxy801AnZZegDRMsMFpYUxO0IrPIKcz0OoTtRREC4BGtbnh4p6Hw4KjHh4vm1syiPsXZ
+m0uCzJtPl16y/k6ED2rkbKbnrQgUzRCYuItmGEMHxpepOjyAp6IIThxSvVpLHr2omcfAmx4NubKJhmx1oiE6jQ5ytnmtfsbM
+acR5hLgVFWThUNnsl0Yk87+8TmgsrT+rau0DRB867Ohdgrg6mHiDlgsltRI5xI9lQPVH9vgvLqnyRyDbNnYdsnqvYYesw3KN
+EJyZuqB4fMc9eQkqWvmcfO8na1qb6h2ru3k00YP7qzCyvnZJjhsNPnQYGlHHKa0T1UfaFx57IWJqSiDQeCsqNEz0/Bixh3ji
+UUUv96NGj8R9AfMYCq2ZQx5fIzkgPyi9+7zd8Arum6Se2PBh0AH2gWh1gxOacT5DBQrreAjgzJ3oyYotHMDYYaxqQvGUqKkP
+HR0wCWsmYeTDqUNqwVYRTxQMLokfzLhhkGGCI1ud4IhOAzPpe42oev4hmZhWJo244fKMvCtFRvMNs3Xj/VbQaw8qWpq3ptEI
+337/dypXfCDvU+m9r4otfa1uN+RD85SSBvB5VFebi4rnCHBTjT43OqEZWepW4Iy9AwyHof4ehSzyPRa5U9nK66on3ROJorMD
+/c7Zzn/+K+fI0X8ZdZbuvQ8ltcynmzpv2t2mPv769uz95eePr88+n/8c8yV0La0iZT7Sqe2DSx86EC5XcGEYmnPPaeXSwLaz
+phIrqvEK7ZdXdJuOHxnk6CipVgdKXafnx+eGvrWn5rwG7PqgNZ7NtcG+mTur0hpDBzIh3FNVirwhlmlVhMS63q/JQnXZo1HF
+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
+QQZAyHeE6YChoxyARsU18fH/Ac9jcb0=
+    """
+)
+
+LEDGER_LAVD_PROMPT_TEMPLATE = """\
+Mind the csv format - columns are strictly delimited with comas. Focus only on columns: Ticket number, Closed Date, Date (if not the same when ticket was created), Time start, Time end, Break minutes. Go thoroughly through every line by line finding:
+- Ticket's Effective Close Date is Date (if not the same when ticket was created), if it is not empty, otherwise Effective Close Date is Closed Date. Skip those outside 10/1 to 10/15.
+- how much time ticket took (Time start to Time end minus Break minutes). Tickets can't last over night: if time start is after time end it is because user mixed am with pm.
+- count the number of matching tickets and time spent on them
+- the output should be just two numbers: number of matching tickets, hours spent on them.
+csv file:
+{csv_data}"""
+
 BUILTIN_TEST_PROFILES = {
     "estonia": {
         "description": (
@@ -3817,7 +3936,38 @@ BUILTIN_TEST_PROFILES = {
         "correct_regex": r"\bestonia\b",
         "score_source": "final_answer",
         "default_max_tokens": 40000,
+        "default_concurrency": 30,
+        "default_runs": 30,
     },
+    "lavd-test": {
+        "description": (
+            "LAVD context consistency test. Any model can do the arithmetic; the "
+            "hard part is keeping a long structured context consistent, finding "
+            "human errors in the data, understanding how to fix them, and returning "
+            "the final ticket count and hours."
+        ),
+        "csv_blob": LEDGER_LAVD_CSV_ZLIB_B64,
+        "prompt_template": LEDGER_LAVD_PROMPT_TEMPLATE,
+        "prompt_encoding": "utf-8",
+        "prompt_compression": "zlib+base64",
+        "scorer": "ledger_lavd",
+        "score_source": "content",
+        "expected_count": 72,
+        "expected_hours": 46.0,
+        "approx_tolerance": 4.0,
+        "dataset_rows": 167,
+        "dataset_sha256": "612f8041bbca048c044dd77ebd58964afded85b0d76513c013715a401b09dc34",
+        "prompt_sha256": "5c83674d5f0fd2a727bf11c521a765f8be4a13087714a2151fc96078018c4aa0",
+        "default_max_tokens": 0,
+        "default_concurrency": 10,
+        "default_runs": 10,
+        "default_no_prefill_scout": True,
+    },
+}
+
+BUILTIN_TEST_PROFILE_ALIASES = {
+    "lavd": "lavd-test",
+    "ledger-lavd": "lavd-test",
 }
 
 METRIC_RE = re.compile(r'^((?:sglang|vllm):\w+)(?:\{([^}]*)\})?\s+([\d.eE+-]+)')
@@ -3947,6 +4097,9 @@ class CompletionStatsRun:
     e2e_tok_s: float = 0.0
     finish_reason: str = ""
     final_answer: str = ""
+    score_label: str = ""
+    score_detail: str = ""
+    parsed_answer: str = ""
     output_excerpt: str = ""
     output_text: str = ""
     reasoning_text: str = ""
@@ -6594,21 +6747,109 @@ def score_completion_text(
     return bool(re.search(regex, target or "", flags=re.IGNORECASE))
 
 
+def parse_numeric_pair_from_end(text: str) -> tuple[Optional[int], Optional[float]]:
+    if not text:
+        return None, None
+    matches = list(re.finditer(r"(\d+)\s*[,;\s]\s*(\d+(?:\.\d+)?)", text))
+    if matches:
+        match = matches[-1]
+        return int(match.group(1)), float(match.group(2))
+    nums = re.findall(r"\d+(?:\.\d+)?", text)
+    if len(nums) >= 2:
+        return int(float(nums[-2])), float(nums[-1])
+    return None, None
+
+
+def score_completion_profile(
+    *,
+    profile: Optional[dict],
+    final_answer: str,
+    content_text: str,
+    output_text: str,
+    regex: str,
+    source: str,
+) -> dict:
+    profile = profile or {}
+    scorer = str(profile.get("scorer") or "")
+    if scorer == "ledger_lavd":
+        target = content_text or output_text or final_answer
+        pred_count, pred_hours = parse_numeric_pair_from_end(target)
+        expected_count = int(profile.get("expected_count") or 72)
+        expected_hours = float(profile.get("expected_hours") or 46.0)
+        tolerance = float(profile.get("approx_tolerance") or 4.0)
+        if pred_count is None or pred_hours is None:
+            return {
+                "correct": False,
+                "score_label": "fail",
+                "score_detail": "unparseable",
+                "parsed_answer": "",
+            }
+        count_delta = pred_count - expected_count
+        hours_delta = pred_hours - expected_hours
+        parsed = f"{pred_count}, {pred_hours:g}"
+        if count_delta == 0 and abs(hours_delta) < 0.01:
+            return {
+                "correct": True,
+                "score_label": "exact",
+                "score_detail": "exact",
+                "parsed_answer": parsed,
+            }
+        if abs(count_delta) <= tolerance and abs(hours_delta) <= tolerance:
+            return {
+                "correct": True,
+                "score_label": "near",
+                "score_detail": f"count {count_delta:+d}, hours {hours_delta:+.2f}",
+                "parsed_answer": parsed,
+            }
+        return {
+            "correct": False,
+            "score_label": "fail",
+            "score_detail": f"count {count_delta:+d}, hours {hours_delta:+.2f}",
+            "parsed_answer": parsed,
+        }
+
+    correct = score_completion_text(
+        final_answer=final_answer,
+        content_text=content_text,
+        output_text=output_text,
+        regex=regex,
+        source=source,
+    )
+    return {
+        "correct": correct,
+        "score_label": "pass" if correct is True else ("fail" if correct is False else ""),
+        "score_detail": "",
+        "parsed_answer": "",
+    }
+
+
 def builtin_test_profile_names() -> list[str]:
     return sorted(BUILTIN_TEST_PROFILES)
 
 
+def normalize_builtin_test_profile_name(profile_name: str) -> str:
+    return BUILTIN_TEST_PROFILE_ALIASES.get(profile_name, profile_name)
+
+
 def decode_builtin_test_profile_prompt(profile_name: str) -> tuple[str, str, dict]:
+    profile_name = normalize_builtin_test_profile_name(profile_name)
     profile = BUILTIN_TEST_PROFILES.get(profile_name)
     if not profile:
         known = ", ".join(builtin_test_profile_names()) or "none"
         raise ValueError(f"Unknown test profile '{profile_name}'. Available profiles: {known}")
-    blob = "".join(str(profile.get("prompt_blob") or "").split())
-    if not blob:
-        raise ValueError(f"Built-in test profile '{profile_name}' has no embedded prompt blob")
     try:
-        prompt_bytes = zlib.decompress(base64.b64decode(blob))
-        prompt = prompt_bytes.decode(str(profile.get("prompt_encoding") or "utf-8")).rstrip("\n")
+        encoding = str(profile.get("prompt_encoding") or "utf-8")
+        blob = "".join(str(profile.get("prompt_blob") or "").split())
+        if blob:
+            prompt_bytes = zlib.decompress(base64.b64decode(blob))
+            prompt = prompt_bytes.decode(encoding).rstrip("\n")
+        else:
+            csv_blob = "".join(str(profile.get("csv_blob") or "").split())
+            template = str(profile.get("prompt_template") or "")
+            if not csv_blob or not template:
+                raise ValueError(f"Built-in test profile '{profile_name}' has no embedded prompt or CSV blob")
+            csv_data = zlib.decompress(base64.b64decode(csv_blob)).decode(encoding)
+            prompt = template.format(csv_data=csv_data).rstrip("\n")
     except Exception as exc:
         raise ValueError(f"Cannot decode built-in test profile '{profile_name}': {exc}") from exc
     if not prompt:
@@ -7822,6 +8063,7 @@ async def stream_completion_stats_request(
     correct_regex: str,
     score_source: str,
     save_text: bool,
+    profile_config: Optional[dict] = None,
     progress_callback=None,
 ) -> CompletionStatsRun:
     req_start = time.monotonic()
@@ -7953,7 +8195,8 @@ async def stream_completion_stats_request(
     ttst = (second_token - first_token) if first_token and second_token else 0.0
     gen_tok_s = completion_tokens / gen_elapsed if completion_tokens > 0 and gen_elapsed > 0 else 0.0
     e2e_tok_s = completion_tokens / elapsed if completion_tokens > 0 and elapsed > 0 else 0.0
-    correct = score_completion_text(
+    score = score_completion_profile(
+        profile=profile_config,
         final_answer=final_answer,
         content_text=content_text,
         output_text=output_text,
@@ -7968,7 +8211,6 @@ async def stream_completion_stats_request(
         phase=phase,
         concurrency=concurrency,
         ok=bool(first_token or completion_tokens > 0 or output_text),
-        correct=correct,
         completion_tokens=completion_tokens,
         prompt_tokens=prompt_tokens,
         elapsed=elapsed,
@@ -7979,11 +8221,15 @@ async def stream_completion_stats_request(
         e2e_tok_s=e2e_tok_s,
         finish_reason=finish_reason,
         final_answer=final_answer,
+        score_label=str(score.get("score_label") or ""),
+        score_detail=str(score.get("score_detail") or ""),
+        parsed_answer=str(score.get("parsed_answer") or ""),
         output_excerpt=excerpt,
         output_text=output_text if save_text else "",
         reasoning_text=reasoning_text if save_text else "",
         content_text=content_text if save_text else "",
         error="",
+        correct=score.get("correct"),
         hit_max_tokens=finish_reason == "length",
         estimated_tokens=estimated_tokens,
         cancelled=cancelled,
@@ -9607,6 +9853,10 @@ def summarize_completion_stats_runs(runs: list[CompletionStatsRun]) -> dict:
     correct_known = [r for r in ok if r.correct is not None]
     correct = [r for r in ok if r.correct is True]
     wrong = [r for r in ok if r.correct is False]
+    score_counts = {}
+    for run in ok:
+        if run.score_label:
+            score_counts[run.score_label] = score_counts.get(run.score_label, 0) + 1
     elapsed_values = [r.elapsed for r in ok if r.elapsed > 0]
     gen_elapsed_values = [r.gen_elapsed for r in ok if r.gen_elapsed > 0]
     token_values = [r.completion_tokens for r in ok if r.completion_tokens > 0]
@@ -9623,8 +9873,12 @@ def summarize_completion_stats_runs(runs: list[CompletionStatsRun]) -> dict:
         "errors": len([r for r in runs if not r.ok]),
         "correct": len(correct),
         "wrong": len(wrong),
+        "score_counts": score_counts,
+        "exact": int(score_counts.get("exact", 0)),
+        "near": int(score_counts.get("near", 0)),
+        "fail": int(score_counts.get("fail", 0)),
         "correct_rate": (len(correct) / len(correct_known)) if correct_known else 0.0,
-        "score_available": bool(correct_known),
+        "score_available": bool(correct_known or score_counts),
         "hit_max_tokens": len([r for r in ok if r.hit_max_tokens]),
         "estimated_token_runs": len([r for r in ok if r.estimated_tokens]),
         "completion_tokens": stats(token_values),
@@ -9638,6 +9892,49 @@ def summarize_completion_stats_runs(runs: list[CompletionStatsRun]) -> dict:
     }
 
 
+def format_completion_score_summary(summary: dict) -> str:
+    counts = summary.get("score_counts") or {}
+    if counts.get("exact") is not None and any(k in counts for k in ("exact", "near", "fail")):
+        return f"EXACT {counts.get('exact', 0)} / NEAR {counts.get('near', 0)} / FAIL {counts.get('fail', 0)}"
+    if any(k in counts for k in ("pass", "fail")):
+        return f"PASS {counts.get('pass', 0)} / FAIL {counts.get('fail', 0)}"
+    if summary.get("score_available"):
+        return f"{summary['correct']}/{summary['completed']}"
+    return "-"
+
+
+def completion_star_bar(summary: dict, width: int = 10) -> str:
+    counts = summary.get("score_counts") or {}
+    exact = int(summary.get("exact", counts.get("exact", 0)) or 0)
+    near = int(summary.get("near", counts.get("near", 0)) or 0)
+    fail = int(summary.get("fail", counts.get("fail", 0)) or 0)
+    scored = exact + near + fail
+    if scored <= 0:
+        return "☆" * width
+    good = exact + near
+    filled = max(0, min(width, int(round((good / scored) * width))))
+    return ("★" * filled) + ("☆" * (width - filled))
+
+
+def format_completion_run_score(run: CompletionStatsRun) -> str:
+    if not run.ok:
+        return "ERR"
+    label = (run.score_label or "").lower()
+    if label == "exact":
+        return "EXACT"
+    if label == "near":
+        return "NEAR"
+    if label == "fail":
+        return "FAIL"
+    if label == "pass":
+        return "PASS"
+    if run.correct is True:
+        return "PASS"
+    if run.correct is False:
+        return "FAIL"
+    return "-"
+
+
 def completion_stats_table_rows(level_summaries: list[dict], title: str = "Concurrency Results") -> Table:
     table = Table(
         title=render_title(title),
@@ -9648,7 +9945,8 @@ def completion_stats_table_rows(level_summaries: list[dict], title: str = "Concu
     )
     table.add_column("parallel", justify="right", no_wrap=True)
     table.add_column("done/started", justify="right", no_wrap=True)
-    table.add_column("correct", justify="right", no_wrap=True)
+    table.add_column("score", justify="right", no_wrap=True)
+    table.add_column("stars", justify="center", no_wrap=True)
     table.add_column("output tok p50", justify="right", no_wrap=True)
     table.add_column("output tok p90", justify="right", no_wrap=True)
     table.add_column("aggregate tok/s", justify="right", no_wrap=True)
@@ -9657,13 +9955,11 @@ def completion_stats_table_rows(level_summaries: list[dict], title: str = "Concu
     for row in level_summaries:
         summary = row["summary"]
         selected = "yes" if row.get("selected") else ""
-        correct_cell = "—"
-        if summary.get("score_available"):
-            correct_cell = f"{summary['correct']}/{summary['completed']}"
         table.add_row(
             str(row["concurrency"]),
             f"{summary['completed']}/{summary['attempted']}",
-            correct_cell,
+            format_completion_score_summary(summary),
+            completion_star_bar(summary) if summary.get("score_counts") else "—",
             f"{summary['completion_tokens']['p50']:,.0f}",
             f"{summary['completion_tokens']['p90']:,.0f}",
             f"{summary['aggregate_gen_tok_s']:,.1f}",
@@ -9737,14 +10033,10 @@ def render_completion_stats_display(state: dict) -> Panel:
     stats.add_column("value", justify="right", no_wrap=True)
     stats.add_column("p50", justify="right", no_wrap=True)
     stats.add_column("p90", justify="right", no_wrap=True)
-    correct_cell = "—"
-    if live_summary.get("score_available"):
-        correct_cell = (
-            f"{live_summary['correct']}/{live_summary['completed']} "
-            f"({live_summary['correct_rate']:.0%})"
-        )
     stats.add_row("completed", f"{live_summary['completed']}/{live_summary['attempted']}", "", "")
-    stats.add_row("correct", correct_cell, "", "")
+    stats.add_row("score", format_completion_score_summary(live_summary), "", "")
+    if live_summary.get("score_counts"):
+        stats.add_row("stars", completion_star_bar(live_summary), "10-point", "")
     stats.add_row(
         "completion tok",
         f"{live_summary['completion_tokens']['avg']:,.0f}",
@@ -9831,7 +10123,7 @@ def render_completion_stats_display(state: dict) -> Panel:
         phase_label = run.phase.replace("_", " ")
         output_cell = f"{run.completion_tokens:,}" if run.completion_tokens else "—"
         tps_cell = f"{run.gen_tok_s:.1f}" if run.gen_tok_s else "—"
-        ok = "yes" if run.ok else "err"
+        ok = format_completion_run_score(run)
         excerpt_cell = run.final_answer or run.output_excerpt or run.error or ""
         if run.phase == "prefill_scout":
             prefill_tps = (
@@ -9848,9 +10140,12 @@ def render_completion_stats_display(state: dict) -> Panel:
                 (run.error or "prefix-cache scout")
             )
         elif run.correct is True:
-            ok = "yes"
+            ok = format_completion_run_score(run)
         elif run.correct is False:
-            ok = "no"
+            ok = format_completion_run_score(run)
+        if run.parsed_answer:
+            detail = run.score_detail or ""
+            excerpt_cell = f"{run.parsed_answer} ({detail}) | {excerpt_cell}" if detail else f"{run.parsed_answer} | {excerpt_cell}"
         recent.add_row(
             str(run.run_index),
             phase_label,
@@ -9876,9 +10171,10 @@ def render_completion_stats_display(state: dict) -> Panel:
     if state.get("level_summaries"):
         group_items.append(completion_stats_table_rows(state["level_summaries"]))
     group_items.append(recent)
+    panel_title = "LAVD Test" if state.get("profile") == "lavd-test" else "Completion Token Stats"
     return Panel(
         Group(*group_items),
-        title=render_title("Completion Token Stats"),
+        title=render_title(panel_title),
         box=PANEL_BOX,
         border_style=FRAME_BORDER,
     )
@@ -9911,10 +10207,14 @@ async def run_completion_stats_batch(
     state["inflight"] = {}
     state["stop_requested"] = False
 
+    def sync_live_size() -> None:
+        live_console = getattr(live, "console", None)
+        state["console_width"] = getattr(live_console, "width", state.get("console_width", 160))
+        state["console_height"] = getattr(live_console, "height", state.get("console_height", 40))
+
     async def progress_callback(run_index: int, update: dict) -> None:
         async with lock:
-            state["console_width"] = getattr(live.console, "width", state.get("console_width", 160))
-            state["console_height"] = getattr(live.console, "height", state.get("console_height", 40))
+            sync_live_size()
             entry = state.setdefault("inflight", {}).setdefault(run_index, {
                 "start": update.get("start", time.monotonic()),
                 "status": "starting",
@@ -9933,8 +10233,7 @@ async def run_completion_stats_batch(
             except asyncio.QueueEmpty:
                 return
             async with lock:
-                state["console_width"] = getattr(live.console, "width", state.get("console_width", 160))
-                state["console_height"] = getattr(live.console, "height", state.get("console_height", 40))
+                sync_live_size()
                 state["active"] = state.get("active", 0) + 1
                 state["started"] = state.get("started", 0) + 1
                 state["queued"] = queue.qsize()
@@ -9956,6 +10255,7 @@ async def run_completion_stats_batch(
                     correct_regex=args.completion_stats_correct_regex,
                     score_source=args.completion_stats_score_source,
                     save_text=args.completion_stats_save_text,
+                    profile_config=getattr(args, "completion_stats_profile_config", {}) or {},
                     progress_callback=progress_callback,
                 )
             except asyncio.CancelledError:
@@ -9967,8 +10267,7 @@ async def run_completion_stats_batch(
                 queue.task_done()
                 return
             async with lock:
-                state["console_width"] = getattr(live.console, "width", state.get("console_width", 160))
-                state["console_height"] = getattr(live.console, "height", state.get("console_height", 40))
+                sync_live_size()
                 results.append(run)
                 state.setdefault("recent", []).append(run)
                 state.setdefault("measured_runs", []).append(run)
@@ -9983,8 +10282,7 @@ async def run_completion_stats_batch(
     async def ticker() -> None:
         while not all(task.done() for task in workers):
             async with lock:
-                state["console_width"] = getattr(live.console, "width", state.get("console_width", 160))
-                state["console_height"] = getattr(live.console, "height", state.get("console_height", 40))
+                sync_live_size()
                 state["queued"] = queue.qsize()
                 state["stop_requested"] = _quit_event.is_set()
                 live.update(render_completion_stats_display(state))
@@ -10043,10 +10341,14 @@ async def run_completion_stats_scout(
 
     lock = asyncio.Lock()
 
+    def sync_live_size() -> None:
+        live_console = getattr(live, "console", None)
+        state["console_width"] = getattr(live_console, "width", state.get("console_width", 160))
+        state["console_height"] = getattr(live_console, "height", state.get("console_height", 40))
+
     async def progress_callback(run_index: int, update: dict) -> None:
         async with lock:
-            state["console_width"] = getattr(live.console, "width", state.get("console_width", 160))
-            state["console_height"] = getattr(live.console, "height", state.get("console_height", 40))
+            sync_live_size()
             entry = state.setdefault("inflight", {}).setdefault(run_index, {})
             entry.update(update)
             state["scout_status"] = f"running: {entry.get('status', 'waiting')}"
@@ -10062,6 +10364,7 @@ async def run_completion_stats_scout(
         correct_regex="",
         score_source=args.completion_stats_score_source,
         save_text=False,
+        profile_config={},
         progress_callback=progress_callback,
     ))
     while not task.done():
@@ -10107,10 +10410,18 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
         if fixed > 0 else
         "Adaptive concurrency probe followed by collection at the fastest level."
     )
-    console.print(Panel(
+    scorer = str(metadata.get("profile_scorer") or "")
+    intro = (
+        "[bold]LAVD Context Consistency Test[/bold]\n"
+        "Arithmetic is intentionally simple; the test checks whether the model keeps "
+        "a long structured context consistent, finds human data-entry errors, applies "
+        "the repair rule, and returns the final ticket count and hours. "
+    ) if scorer == "ledger_lavd" else (
         "[bold]Completion Token Statistics[/bold]\n"
         "One optional prefix-cache scout request is used to populate prefill first. "
-        f"{mode_text}",
+    )
+    console.print(Panel(
+        intro + mode_text,
         title=render_title("Completion Stats"),
         box=PANEL_BOX,
         border_style=FRAME_BORDER,
@@ -10130,7 +10441,19 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
     profile_table.add_row("prompt chars", f"{int(metadata.get('prompt_chars') or 0):,}")
     profile_table.add_row("requested runs", str(metadata.get("requested_runs") or metadata.get("min_results") or ""))
     profile_table.add_row("concurrency", str(fixed or report.get("selected_concurrency") or "adaptive"))
-    profile_table.add_row("max tokens", str(metadata.get("max_tokens") or ""))
+    max_tokens_meta = metadata.get("max_tokens")
+    profile_table.add_row(
+        "max tokens",
+        str(max_tokens_meta) if max_tokens_meta else "omitted (server/model default)",
+    )
+    if metadata.get("profile_scorer"):
+        profile_table.add_row("scoring", str(metadata.get("profile_scorer")))
+    if metadata.get("expected_answer"):
+        profile_table.add_row("expected", str(metadata.get("expected_answer")))
+    if metadata.get("prompt_sha256"):
+        profile_table.add_row("prompt sha256", str(metadata.get("prompt_sha256"))[:16])
+    if metadata.get("dataset_sha256"):
+        profile_table.add_row("dataset sha256", str(metadata.get("dataset_sha256"))[:16])
     scout = report.get("prefill_scout") or {}
     if scout.get("ok") and scout.get("prompt_tokens") and scout.get("ttft"):
         scout_tps = scout["prompt_tokens"] / scout["ttft"]
@@ -10142,7 +10465,8 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
         profile_table.add_row("KV budget", f"{int(metadata.get('kv_budget')):,} ({metadata.get('kv_source') or 'server'})")
     if metadata.get("max_running_requests"):
         profile_table.add_row("max running", str(metadata.get("max_running_requests")))
-    profile_table.add_row("correct regex", metadata.get("correct_regex") or "disabled")
+    if metadata.get("correct_regex"):
+        profile_table.add_row("correct regex", metadata.get("correct_regex"))
     console.print(profile_table)
     console.print(completion_stats_table_rows(report["level_summaries"]))
 
@@ -10158,7 +10482,9 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
     selected_table.add_column("value", justify="right")
     selected_table.add_row("completed", f"{selected['completed']}/{selected['attempted']}")
     if selected.get("score_available"):
-        selected_table.add_row("correct", f"{selected['correct']}/{selected['completed']} ({selected['correct_rate']:.1%})")
+        selected_table.add_row("score", format_completion_score_summary(selected))
+        if selected.get("score_counts"):
+            selected_table.add_row("stars", f"{completion_star_bar(selected)} 👍")
     selected_table.add_row("hit max_tokens", str(selected["hit_max_tokens"]))
     selected_table.add_row("completion tokens avg", f"{selected['completion_tokens']['avg']:,.0f}")
     selected_table.add_row("completion tokens p50", f"{selected['completion_tokens']['p50']:,.0f}")
@@ -10172,7 +10498,7 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
 
     if report.get("wrong_runs"):
         wrong = Table(
-            title=render_title("Wrong / Failed Final Answers"),
+            title=render_title("Failed Final Answers"),
             title_justify="left",
             box=REPORT_BOX,
             border_style=SUBTLE_BORDER,
@@ -10181,25 +10507,40 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
         wrong.add_column("#", justify="right", no_wrap=True)
         wrong.add_column("C", justify="right", no_wrap=True)
         wrong.add_column("tokens", justify="right", no_wrap=True)
+        wrong.add_column("score", justify="center", no_wrap=True)
         wrong.add_column("final answer")
         for row in report["wrong_runs"][:12]:
+            parsed = row.get("parsed_answer") or ""
+            detail = row.get("score_detail") or ""
+            answer = row.get("final_answer", "")[:140]
+            if parsed:
+                answer = f"{parsed} ({detail}) | {answer}" if detail else f"{parsed} | {answer}"
             wrong.add_row(
                 str(row["run_index"]),
                 str(row["concurrency"]),
                 f"{row['completion_tokens']:,}",
-                row.get("final_answer", "")[:140],
+                str(row.get("score_label") or "fail").upper(),
+                answer,
             )
         console.print(wrong)
 
-    console.print(
-        "[dim]Interpretation: completion-token p50/p90/p99 tells how many decode tokens the model needed "
-        "to reach its final answer under this engine/config. Correctness is scored from the final non-empty "
-        "answer line by default, matching the GLM dense-MLA vs NSA benchmark methodology. "
-        "The prefill scout is not a scored answer; it is the max_tokens=1 prefix-cache warmup and its "
-        "prompt_tokens/TTFT value is reported as scout prefill speed. "
-        "Concurrency Results groups completed requests by parallelism; Completed Requests shows the latest "
-        "individual finished answers.[/dim]"
-    )
+    if str(metadata.get("profile_scorer") or "") == "ledger_lavd":
+        console.print(
+            "[dim]Interpretation: EXACT means the parsed final numeric pair is exactly 72, 46.0. "
+            "NEAR means both count and hours are within the configured tolerance; FAIL means the "
+            "answer was unparseable or outside tolerance. The 10-star bar rounds "
+            "(EXACT+NEAR)/scored_runs to ★★★★★★★★★★ scale for quick screenshots.[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]Interpretation: completion-token p50/p90/p99 tells how many decode tokens the model needed "
+            "to reach its final answer under this engine/config. Correctness is scored from the final non-empty "
+            "answer line by default, matching the GLM dense-MLA vs NSA benchmark methodology. "
+            "The prefill scout is not a scored answer; it is the max_tokens=1 prefix-cache warmup and its "
+            "prompt_tokens/TTFT value is reported as scout prefill speed. "
+            "Concurrency Results groups completed requests by parallelism; Completed Requests shows the latest "
+            "individual finished answers.[/dim]"
+        )
 
 
 async def run_completion_stats_benchmark(args) -> dict:
@@ -10216,6 +10557,7 @@ async def run_completion_stats_benchmark(args) -> dict:
     prompt, prompt_source = load_completion_stats_prompt(args)
     profile = BUILTIN_TEST_PROFILES.get(getattr(args, "test_profile", "") or "")
     profile_name = getattr(args, "test_profile", "") or ""
+    setattr(args, "completion_stats_profile_config", profile or {})
     fixed_concurrency = int(getattr(args, "completion_stats_concurrency", 0) or 0)
     requested_runs = int(getattr(args, "completion_stats_runs", 0) or 0)
     if requested_runs > 0:
@@ -10230,7 +10572,8 @@ async def run_completion_stats_benchmark(args) -> dict:
         levels.insert(0, 1)
 
     if args.max_tokens == 2048 and "--max-tokens" not in sys.argv:
-        args.max_tokens = int((profile or {}).get("default_max_tokens") or 40000)
+        default_max_tokens = (profile or {}).get("default_max_tokens")
+        args.max_tokens = int(default_max_tokens) if default_max_tokens is not None else 40000
 
     async with httpx.AsyncClient(headers=auth_headers, timeout=httpx.Timeout(None, connect=30.0)) as client:
         models = []
@@ -10290,9 +10633,10 @@ async def run_completion_stats_benchmark(args) -> dict:
             "model": args.model,
             "messages": build_user_prompt_messages(prompt),
             "stream": True,
-            "max_tokens": args.max_tokens,
             "stream_options": {"include_usage": True},
         }
+        if args.max_tokens > 0:
+            payload["max_tokens"] = args.max_tokens
         if args.completion_stats_temperature is not None:
             payload["temperature"] = args.completion_stats_temperature
         if args.completion_stats_top_p is not None:
@@ -10473,7 +10817,8 @@ async def run_completion_stats_benchmark(args) -> dict:
                 "prompt_source": prompt_source,
                 "prompt_chars": len(prompt),
                 "timestamp": datetime.now().isoformat(),
-                "max_tokens": args.max_tokens,
+                "max_tokens": args.max_tokens if args.max_tokens > 0 else None,
+                "max_tokens_omitted": args.max_tokens <= 0,
                 "fixed_concurrency": fixed_concurrency,
                 "requested_runs": args.completion_stats_min_results,
                 "concurrency_levels_requested": levels,
@@ -10484,6 +10829,15 @@ async def run_completion_stats_benchmark(args) -> dict:
                 "patience": args.completion_stats_patience,
                 "correct_regex": args.completion_stats_correct_regex,
                 "score_source": args.completion_stats_score_source,
+                "profile_scorer": (profile or {}).get("scorer", "regex" if args.completion_stats_correct_regex else ""),
+                "expected_answer": (
+                    f"{(profile or {}).get('expected_count')}, {(profile or {}).get('expected_hours'):g}"
+                    if (profile or {}).get("scorer") == "ledger_lavd" else ""
+                ),
+                "approx_tolerance": (profile or {}).get("approx_tolerance", ""),
+                "dataset_rows": (profile or {}).get("dataset_rows", ""),
+                "dataset_sha256": (profile or {}).get("dataset_sha256", ""),
+                "prompt_sha256": (profile or {}).get("prompt_sha256", ""),
                 "prefill_scout": not args.completion_stats_no_prefill_scout,
                 "temperature": args.completion_stats_temperature,
                 "top_p": args.completion_stats_top_p,
@@ -10510,8 +10864,12 @@ async def run_completion_stats_benchmark(args) -> dict:
                 for r in all_runs
             ],
             "methodology": {
-                "name": "Completion-token statistics",
+                "name": "LAVD context consistency test" if (profile or {}).get("scorer") == "ledger_lavd" else "Completion-token statistics",
                 "prefill": (
+                    "This profile keeps the original benchmark logic by default: measured "
+                    "CSV requests are sent directly without a prefix-cache scout. Override "
+                    "with completion-stats options if you intentionally want scout behavior."
+                    if (profile or {}).get("scorer") == "ledger_lavd" else
                     "A single max_tokens=1 scout request is sent first to populate the "
                     "server prefix cache. Measured requests use the exact same prompt, "
                     "so engines with prefix caching can reuse prefill while decode is "
@@ -10531,6 +10889,11 @@ async def run_completion_stats_benchmark(args) -> dict:
                     "and the run is marked estimated_tokens=true."
                 ),
                 "correctness": (
+                    "The final answer is parsed from the end of the response as two numbers: "
+                    "ticket count and hours. EXACT is 72, 46.0; NEAR is within tolerance; "
+                    "FAIL is outside tolerance or unparseable. A 10-star bar rounds the "
+                    "(EXACT+NEAR)/scored_runs ratio for a compact visual score."
+                    if (profile or {}).get("scorer") == "ledger_lavd" else
                     "By default correctness is scored by applying the regex to the final "
                     "non-empty answer line, matching the GLM dense-MLA vs NSA comparison."
                 ),
@@ -12696,6 +13059,7 @@ def check_for_update(console: Console) -> bool:
 
 
 def parse_args():
+    profile_choices = sorted(set(builtin_test_profile_names()) | set(BUILTIN_TEST_PROFILE_ALIASES))
     parser = argparse.ArgumentParser(
         description="LLM Inference Benchmark with Rich TUI Dashboard (SGLang + vLLM)"
     )
@@ -12719,9 +13083,13 @@ def parse_args():
              "If omitted, --completion-stats uses the built-in estonia test profile."
     )
     parser.add_argument(
-        "--test-profile", "--profile", choices=builtin_test_profile_names(), default="",
-        help="Run a built-in long-answer test profile. Currently available: estonia. "
-             "Setting this implies --completion-stats."
+        "--test-profile", "--profile", choices=profile_choices, default="",
+        help=(
+            f"Run a built-in long-answer test profile. Available: {', '.join(builtin_test_profile_names())}. "
+            "lavd-test is a context consistency test: arithmetic any model can do, but the model must "
+            "find human errors in long structured data and understand how to repair them before computing "
+            "ticket count and hours. Setting this implies --completion-stats."
+        )
     )
     parser.add_argument(
         "--completion-stats", action="store_true",
@@ -12833,7 +13201,7 @@ def parse_args():
     )
     parser.add_argument(
         "--max-tokens", type=int, default=2048,
-        help="Max tokens to generate per request (default: 2048)"
+        help="Max tokens to generate per request. In --completion-stats/--profile mode, 0 omits max_tokens from the OpenAI request. (default: 2048)"
     )
     parser.add_argument(
         "--decode-warmup-seconds", type=float, default=3.0,
@@ -13130,6 +13498,7 @@ def parse_args():
     if args.test_profile and (args.prompt or args.prompt_file):
         parser.error("--test-profile cannot be combined with --prompt or --prompt-file")
     if args.test_profile:
+        args.test_profile = normalize_builtin_test_profile_name(args.test_profile)
         args.completion_stats = True
     if args.completion_stats and not args.test_profile and not args.prompt and not args.prompt_file:
         args.test_profile = "estonia"
@@ -13139,28 +13508,43 @@ def parse_args():
             args.completion_stats_correct_regex = str(profile.get("correct_regex") or "")
         if not cli_option_present("--completion-stats-score-source"):
             args.completion_stats_score_source = str(profile.get("score_source") or "final_answer")
+        if not cli_option_present("--max-tokens"):
+            default_max_tokens = profile.get("default_max_tokens")
+            if default_max_tokens is not None:
+                args.max_tokens = int(default_max_tokens)
+        default_concurrency = int(profile.get("default_concurrency") or 0)
         if (
-            args.test_profile == "estonia"
+            default_concurrency > 0
             and not cli_option_present(
                 "--completion-stats-concurrency",
                 "--profile-concurrency",
                 "--completion-stats-concurrency-levels",
             )
         ):
-            args.completion_stats_concurrency = 30
+            args.completion_stats_concurrency = default_concurrency
+        default_runs = int(profile.get("default_runs") or 0)
         if (
-            args.test_profile == "estonia"
+            default_runs > 0
             and not cli_option_present(
                 "--completion-stats-runs",
                 "--profile-runs",
                 "--completion-stats-min-results",
             )
         ):
-            args.completion_stats_runs = 30
+            args.completion_stats_runs = default_runs
+        if (
+            profile.get("default_no_prefill_scout")
+            and not cli_option_present("--completion-stats-no-prefill-scout")
+        ):
+            args.completion_stats_no_prefill_scout = True
     if args.completion_stats_runs < 0:
         parser.error("--completion-stats-runs/--profile-runs must be >= 0")
     if args.completion_stats_concurrency < 0:
         parser.error("--completion-stats-concurrency/--profile-concurrency must be >= 0")
+    if args.max_tokens < 0:
+        parser.error("--max-tokens must be >= 0")
+    if args.max_tokens == 0 and not args.completion_stats:
+        parser.error("--max-tokens 0 is only valid with --completion-stats/--profile; decode matrix needs a positive generation length")
     if args.completion_stats_runs > 0:
         args.completion_stats_min_results = args.completion_stats_runs
     if args.completion_stats_min_results < 1:
@@ -13226,18 +13610,28 @@ def main():
         start_keyboard_listener(soft_quit=True)
         fixed_c = args.completion_stats_concurrency
         requested_runs = args.completion_stats_runs or args.completion_stats_min_results
+        profile_config = BUILTIN_TEST_PROFILES.get(args.test_profile or "", {})
         prompt_label = (
             f"profile:{args.test_profile}" if args.test_profile else
             (args.prompt_file or ("inline --prompt" if args.prompt else "custom"))
         )
+        if args.max_tokens <= 0:
+            max_tokens_label = "omitted (no client cap)"
+        else:
+            max_tokens_label = str(args.max_tokens)
+        config_title = "LAVD Context Consistency Test" if args.test_profile == "lavd-test" else "Completion Token Statistics Benchmark"
+        score_label = (
+            "EXACT / NEAR / FAIL numeric pair"
+            if profile_config.get("scorer") == "ledger_lavd" else
+            (args.completion_stats_correct_regex or "disabled")
+        )
         console.print(Panel(
-            f"[bold {PHOSPHOR}]Completion Token Statistics Benchmark[/bold {PHOSPHOR}]\n"
+            f"[bold {PHOSPHOR}]{config_title}[/bold {PHOSPHOR}]\n"
             f"Model: {args.model} @ {args.host if args.host.startswith('http') else f'{args.host}:{args.port or 5000}'}\n"
             f"Prompt: {prompt_label}\n"
             f"Concurrency: {fixed_c if fixed_c > 0 else 'adaptive ' + args.completion_stats_concurrency_levels}\n"
-            f"Measured runs: {requested_runs} | Max tokens: "
-            f"{'40000 auto' if args.max_tokens == 2048 and '--max-tokens' not in sys.argv else args.max_tokens}\n"
-            f"Correct regex: {args.completion_stats_correct_regex or 'disabled'}",
+            f"Measured runs: {requested_runs} | Max tokens: {max_tokens_label}\n"
+            f"Scoring: {score_label}",
             title=render_title("Configuration"),
             box=PANEL_BOX,
             border_style=FRAME_BORDER,
