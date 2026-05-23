@@ -57,7 +57,7 @@ from rich.text import Text
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "0.4.20"
+VERSION = "0.4.21"
 
 CHARS_PER_TOKEN = 4
 DEFAULT_CALIBRATION_CACHE = "/tmp/llm_decode_bench_token_calibration_cache.json"
@@ -9911,12 +9911,12 @@ def completion_star_bar(summary: dict, width: int = 10) -> str:
     fail = int(summary.get("fail", counts.get("fail", 0)) or 0)
     scored = exact + near + fail
     if scored <= 0:
-        return "." * width
+        return "✕" * width
 
     buckets = [
         ("★", exact),
         ("☆", near),
-        (".", fail),
+        ("✕", fail),
     ]
     raw = [(symbol, value * width / scored) for symbol, value in buckets]
     sizes = [int(math.floor(amount)) for _symbol, amount in raw]
@@ -10544,7 +10544,7 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
             "[dim]Interpretation: EXACT means the parsed final numeric pair is exactly 72, 46.0. "
             "NEAR means both count and hours are within the configured tolerance; FAIL means the "
             "answer was unparseable or outside tolerance. The 10-slot quality bar is a rounded "
-            "distribution: ★=EXACT, ☆=NEAR, .=FAIL.[/dim]"
+            "distribution: ★=EXACT, ☆=NEAR, ✕=FAIL.[/dim]"
         )
     else:
         console.print(
@@ -10907,7 +10907,7 @@ async def run_completion_stats_benchmark(args) -> dict:
                     "The final answer is parsed from the end of the response as two numbers: "
                     "ticket count and hours. EXACT is 72, 46.0; NEAR is within tolerance; "
                     "FAIL is outside tolerance or unparseable. The 10-slot quality bar is a "
-                    "rounded distribution: ★=EXACT, ☆=NEAR, .=FAIL."
+                    "rounded distribution: ★=EXACT, ☆=NEAR, ✕=FAIL."
                     if (profile or {}).get("scorer") == "ledger_lavd" else
                     "By default correctness is scored by applying the regex to the final "
                     "non-empty answer line, matching the GLM dense-MLA vs NSA comparison."
