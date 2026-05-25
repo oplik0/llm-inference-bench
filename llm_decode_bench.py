@@ -57,7 +57,7 @@ from rich.text import Text
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "0.4.22"
+VERSION = "0.4.23"
 
 CHARS_PER_TOKEN = 4
 DEFAULT_CALIBRATION_CACHE = "/tmp/llm_decode_bench_token_calibration_cache.json"
@@ -3958,7 +3958,7 @@ BUILTIN_TEST_PROFILES = {
         "scorer": "numeric_exact",
         "score_source": "final_answer",
         "expected_number": 48,
-        "default_max_tokens": 4096,
+        "default_max_tokens": 0,
         "default_concurrency": 30,
         "default_runs": 30,
     },
