@@ -42,60 +42,60 @@ pip install httpx rich psutil
 
 ```bash
 # Default: localhost:5000, tests concurrency 1-128, contexts 0K-128K
-python3 llm_decode_bench.py
+llm-decode-bench
 
 # Custom port and parameters
-python3 llm_decode_bench.py --port 5199 --concurrency 1,2,4 --contexts 0,16384
+llm-decode-bench --port 5199 --concurrency 1,2,4 --contexts 0,16384
 
 # Custom max tokens and test duration
-python3 llm_decode_bench.py --port 5001 --max-tokens 4096 --duration 60
+llm-decode-bench --port 5001 --max-tokens 4096 --duration 60
 
 # Full standalone cold-prefill profile when debugging long-context ingest
-python3 llm_decode_bench.py --port 5001 \
+llm-decode-bench --port 5001 \
     --standalone-prefill --prefill-contexts 8k,16k,32k,64k,128k
 
 # Prefill-only communication sweep: no sustained decode matrix
-python3 llm_decode_bench.py --port 5001 \
+llm-decode-bench --port 5001 \
     --prefill-only --prefill-contexts 8k,64k,128k \
     --display-mode plain --hw-monitor-interval 0.5
 
 # Burst / E2E-only mode: exactly N measured requests per cell
-python3 llm_decode_bench.py --port 5001 --skip-prefill \
+llm-decode-bench --port 5001 --skip-prefill \
     --contexts 0 --concurrency 1,4 \
     --request-count 40 --warmup-request-count 4 --max-tokens 64
 
 # Full report: prefill + sustained decode + short Burst / E2E section
-python3 llm_decode_bench.py --port 5001 \
+llm-decode-bench --port 5001 \
     --concurrency 1,4,8 --contexts 0,16k \
     --duration 30 --run-burst --burst-requests-per-concurrency 5
 
 # Built-in completion-token statistics profile for the GLM long-context task
-python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+llm-decode-bench --port 8001 --model GLM-5 \
     --test-profile estonia \
     --profile-concurrency 8 \
     --profile-runs 30 \
     --max-tokens 40000
 
 # Adaptive completion-token statistics profile search
-python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+llm-decode-bench --port 8001 --model GLM-5 \
     --test-profile estonia \
     --completion-stats-concurrency-levels 1,2,4,8,16,30 \
     --completion-stats-min-results 30
 
 # Remote API with authentication (OpenRouter, Together AI, etc.)
-python3 llm_decode_bench.py --host https://openrouter.ai --api-key sk-or-... --model meta-llama/llama-3-70b
+llm-decode-bench --host https://openrouter.ai --api-key sk-or-... --model meta-llama/llama-3-70b
 
 # Skip prefill phase for quick decode-only testing
-python3 llm_decode_bench.py --skip-prefill --concurrency 1,2,4 --contexts 0
+llm-decode-bench --skip-prefill --concurrency 1,2,4 --contexts 0
 
 # Manual KV cache budget (for vLLM where auto-detection is unreliable)
-python3 llm_decode_bench.py --port 5199 --kv-budget 692736
+llm-decode-bench --port 5199 --kv-budget 692736
 
 # CUDA/NCCL P2P fabric diagnostic only
-python3 llm_decode_bench.py --p2pmark-only
+llm-decode-bench --p2pmark-only
 
 # AMD CPU socket fabric / NUMA diagnostic only
-python3 llm_decode_bench.py --amd-fabric-only
+llm-decode-bench --amd-fabric-only
 ```
 
 ### Arguments
@@ -266,7 +266,7 @@ prefill and focus the benchmark on parallel decode.
 For explicit, reproducible profile runs, use fixed concurrency:
 
 ```bash
-python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+llm-decode-bench --port 8001 --model GLM-5 \
     --test-profile estonia \
     --profile-concurrency 8 \
     --profile-runs 30
@@ -363,8 +363,8 @@ module must be reloaded or the host rebooted before the file takes effect.
 For a deeper fabric sanity check, run:
 
 ```bash
-python3 llm_decode_bench.py --p2pmark-only
-python3 llm_decode_bench.py --p2pmark --p2pmark-mode all --port 8000
+llm-decode-bench --p2pmark-only
+llm-decode-bench --p2pmark --p2pmark-mode all --port 8000
 ```
 
 The bundled `tools/p2pmark/llm_p2pmark` CUDA binary measures CUDA peer memcpy
@@ -388,8 +388,8 @@ runtime does not match.
 For AMD dual-socket hosts, run:
 
 ```bash
-python3 llm_decode_bench.py --amd-fabric-only
-python3 llm_decode_bench.py --amd-fabric --port 8000
+llm-decode-bench --amd-fabric-only
+llm-decode-bench --amd-fabric --port 8000
 ```
 
 The bundled `tools/amd_fabric/llm_amd_fabric` helper measures CPU execution
@@ -470,17 +470,17 @@ A standalone streaming watchdog that runs chat completions against any OpenAI-co
 
 ```bash
 # single shot against local SGLang/vLLM on :5000
-python3 llm_cjk_watchdog.py
+llm-cjk-watchdog
 
 # loop until the model leaks a Chinese character
-python3 llm_cjk_watchdog.py --loop
+llm-cjk-watchdog --loop
 
 # remote OpenAI-compatible endpoint
-python3 llm_cjk_watchdog.py --host https://api.together.xyz \
+llm-cjk-watchdog --host https://api.together.xyz \
     --api-key $TOGETHER_API_KEY --model meta-llama/llama-3-70b
 
 # simulate a 40k-token input context
-python3 llm_cjk_watchdog.py --context-tokens 40000 --max-tokens 2000
+llm-cjk-watchdog --context-tokens 40000 --max-tokens 2000
 ```
 
 Features:
@@ -491,7 +491,7 @@ Features:
 - **Padding context** — optional synthetic input of configurable token size to reproduce long-context failure modes
 - **Exit code 2** when CJK characters are detected (scripting-friendly)
 
-Requires only `requests`. See `python3 llm_cjk_watchdog.py --help` for the full CLI.
+Requires only `requests`. See `llm-cjk-watchdog --help` for the full CLI.
 
 ## License
 

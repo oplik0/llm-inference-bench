@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-inference-bench"
+version = "0.4.24"
+description = "LLM inference decode throughput benchmark with CLI tools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "oplik0" }]
+dependencies = [
+  "httpx",
+  "rich",
+  "psutil",
+  "requests",
+]
+
+[project.scripts]
+llm-decode-bench = "llm_decode_bench:main"
+llm-cjk-watchdog = "llm_cjk_watchdog:main"
+
+[tool.setuptools]
+py-modules = ["llm_decode_bench", "llm_cjk_watchdog"]
