@@ -1,0 +1,3 @@
+[console_scripts]
+llm-cjk-watchdog = llm_cjk_watchdog:cli
+llm-decode-bench = llm_decode_bench:cli

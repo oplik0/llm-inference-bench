@@ -1,3 +1,16 @@
+Metadata-Version: 2.4
+Name: llm-inference-bench
+Version: 0.4.24
+Summary: LLM inference decode throughput benchmark with CLI tools
+Author: oplik0
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: httpx
+Requires-Dist: rich
+Requires-Dist: psutil
+Requires-Dist: requests
+
 # llm-inference-bench
 
 LLM inference decode throughput benchmark with a Rich TUI dashboard.

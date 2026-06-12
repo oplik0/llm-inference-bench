@@ -18,8 +18,8 @@ dependencies = [
 ]
 
 [project.scripts]
-llm-decode-bench = "llm_decode_bench:main"
-llm-cjk-watchdog = "llm_cjk_watchdog:main"
+llm-decode-bench = "llm_decode_bench:cli"
+llm-cjk-watchdog = "llm_cjk_watchdog:cli"
 
 [tool.setuptools]
 py-modules = ["llm_decode_bench", "llm_cjk_watchdog"]
