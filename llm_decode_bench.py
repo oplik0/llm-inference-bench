@@ -18,8 +18,10 @@ Usage:
 import argparse
 import asyncio
 import base64
+import csv
 import glob
 import hashlib
+import io
 import json
 import math
 import os
@@ -35,9 +37,11 @@ import termios
 import threading
 import time
 import tty
+import zipfile
 import zlib
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from pathlib import Path
 from statistics import mean, median, pstdev
 from typing import Optional
 from urllib.parse import urlparse
@@ -57,7 +61,7 @@ from rich.text import Text
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "0.4.24"
+VERSION = "0.4.26"
 
 CHARS_PER_TOKEN = 4
 DEFAULT_CALIBRATION_CACHE = "/tmp/llm_decode_bench_token_calibration_cache.json"
@@ -3924,6 +3928,359 @@ Mind the csv format - columns are strictly delimited with comas. Focus only on c
 csv file:
 {csv_data}"""
 
+ESTONIA_LONG_PROMPT_PREFIX = """\
+For this task, use high reasoning effort before answering. Do not optimize for
+a fast response. Spend substantial internal thinking time, and do not stop at
+the first plausible answer or the first moment of uncertainty.
+
+General internal procedure:
+1. Understand exactly what the user is asking.
+2. Work through the information slowly and make private notes.
+3. Form a provisional answer only after a first complete pass.
+4. Run a second independent verification pass before finalizing.
+5. Look for reasons your provisional answer could be wrong.
+6. If you feel uncertain, continue thinking and checking instead of immediately
+   saying that the answer is unknown.
+7. Only after that, write the shortest final answer that satisfies the question.
+
+Use at least a few thousand internal reasoning tokens if available. Do not show
+your reasoning. Put only the final answer in the visible response.
+
+Original task follows.
+"""
+
+ESTONIA_LONG_SYSTEM_PROMPT = """\
+You are a careful reasoning assistant. For hard tasks, spend substantial private
+reasoning before answering, verify your provisional answer, and avoid premature
+"unknown" responses. Keep the visible answer concise.
+"""
+
+# ---------------------------------------------------------------------------
+# Pinned benchmark datasets (multi-item accuracy profiles)
+# ---------------------------------------------------------------------------
+
+DATASET_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "llm_decode_bench", "datasets")
+
+BENCH_DATASETS = {
+    "gsm8k_test": {
+        "filename": "gsm8k_test.jsonl",
+        "urls": [
+            "https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/test.jsonl",
+            "https://raw.githubusercontent.com/local-inference-lab/llm-inference-bench/main/data/gsm8k_test.jsonl",
+        ],
+        "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+        "expected_items": 1319,
+        "source": "openai/grade-school-math test split, verbatim (MIT license)",
+    },
+    "mmlu_pro_1000": {
+        "filename": "mmlu_pro_1000.jsonl",
+        "urls": [
+            "https://raw.githubusercontent.com/local-inference-lab/llm-inference-bench/main/data/mmlu_pro_1000.jsonl",
+        ],
+        "sha256": "a229ed37f28bea012bf08e81d8ae3358dda17ef7370dca360f632952e3bdcaca",
+        "expected_items": 1000,
+        "source": (
+            "TIGER-Lab/MMLU-Pro test split (Apache-2.0), deterministic stratified "
+            "1000-question subset (largest-remainder per category, floor-stride by question_id)"
+        ),
+    },
+    "gpqa_diamond": {
+        "filename": "gpqa_diamond.jsonl",
+        # The GPQA authors distribute the dataset as a password-protected zip and
+        # ask that the plaintext never be republished online (anti-contamination).
+        # The password below is documented in the official README for legitimate
+        # use; the derived JSONL is cached locally only and must NOT be committed.
+        "archive_url": "https://github.com/idavidrein/gpqa/raw/main/dataset.zip",
+        "archive_sha256": "461ae7329f15a3e35f8184d2dac24b990f34fdf12f366ca4062d8e6638cd08dc",
+        "archive_member": "dataset/gpqa_diamond.csv",
+        "archive_password": "deserted-untie-orchid",
+        "builder": "gpqa_diamond",
+        "sha256": "a8472c5a82ea2df8f209c17713aba1a6d409120c609ec0582dae0cb940c7e28c",
+        "expected_items": 198,
+        "source": (
+            "idavidrein/gpqa dataset.zip diamond split (CC BY 4.0), options shuffled "
+            "deterministically per item (random.Random seeded by record id)"
+        ),
+    },
+}
+
+
+def _build_gpqa_diamond_jsonl(csv_bytes: bytes) -> bytes:
+    """Deterministic canonical JSONL from the official gpqa_diamond.csv."""
+    rows = list(csv.DictReader(io.StringIO(csv_bytes.decode("utf-8"))))
+    out_lines = []
+    for row_index, row in enumerate(rows):
+        record_id = str(row.get("Record ID") or "").strip()
+        question = str(row.get("Question") or "").strip()
+        correct = str(row.get("Correct Answer") or "").strip()
+        incorrect = [str(row.get(f"Incorrect Answer {i}") or "").strip() for i in (1, 2, 3)]
+        domain = str(row.get("High-level domain") or "").strip()
+        subdomain = str(row.get("Subdomain") or "").strip()
+        if not record_id or not question or not correct or not all(incorrect) or not domain:
+            raise RuntimeError(f"GPQA diamond CSV row {row_index} is malformed")
+        options = [correct] + incorrect
+        random.Random(f"gpqa-diamond-{record_id}").shuffle(options)
+        answer_index = options.index(correct)
+        out_lines.append(json.dumps({
+            "record_id": record_id,
+            "category": domain,
+            "subdomain": subdomain,
+            "question": question,
+            "options": options,
+            "answer": MC_OPTION_LETTERS[answer_index],
+            "answer_index": answer_index,
+        }, sort_keys=True, ensure_ascii=True, separators=(",", ":")))
+    return ("\n".join(out_lines) + "\n").encode("utf-8")
+
+
+BENCH_DATASET_BUILDERS = {
+    "gpqa_diamond": _build_gpqa_diamond_jsonl,
+}
+
+GSM8K_PROMPT_SUFFIX = (
+    "\n\nSolve the problem step by step if you need to. End your response with "
+    "the final numeric answer alone on the last line."
+)
+
+MMLU_PRO_PROMPT_TEMPLATE = (
+    "Answer the following multiple-choice question.\n\n"
+    "{question}\n\n"
+    "Options:\n"
+    "{options}\n\n"
+    "Reason as needed, then end your response with only the chosen option "
+    "letter on the last line, in the form:\nAnswer: <letter>"
+)
+
+MC_OPTION_LETTERS = "ABCDEFGHIJ"
+
+
+def sha256_of_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def resolve_benchmark_dataset(dataset_name: str, console: Optional[Console] = None) -> tuple[str, str]:
+    """Return (path, sha256) of a pinned dataset: local repo copy, cache, or download."""
+    spec = BENCH_DATASETS.get(dataset_name)
+    if not spec:
+        known = ", ".join(sorted(BENCH_DATASETS)) or "none"
+        raise ValueError(f"Unknown benchmark dataset '{dataset_name}'. Available: {known}")
+    expected_sha = str(spec["sha256"])
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    local_path = os.path.join(script_dir, "data", str(spec["filename"]))
+    cache_path = os.path.join(DATASET_CACHE_DIR, str(spec["filename"]))
+    problems = []
+    for path in (local_path, cache_path):
+        if os.path.isfile(path):
+            digest = sha256_of_file(path)
+            if digest == expected_sha:
+                return path, digest
+            problems.append(f"{path}: sha256 mismatch (expected {expected_sha[:16]}…, got {digest[:16]}…)")
+    os.makedirs(DATASET_CACHE_DIR, exist_ok=True)
+    archive_url = str(spec.get("archive_url") or "")
+    if archive_url:
+        if console is not None:
+            console.print(
+                f"[cyan]Downloading pinned dataset archive for {dataset_name} "
+                f"from {archive_url} ...[/cyan]"
+            )
+        try:
+            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(180.0, connect=30.0)) as client:
+                resp = client.get(archive_url)
+                resp.raise_for_status()
+                archive_blob = resp.content
+            archive_digest = hashlib.sha256(archive_blob).hexdigest()
+            expected_archive_sha = str(spec.get("archive_sha256") or "")
+            if expected_archive_sha and archive_digest != expected_archive_sha:
+                raise RuntimeError(
+                    f"archive sha256 mismatch (expected {expected_archive_sha[:16]}…, "
+                    f"got {archive_digest[:16]}…)"
+                )
+            member = str(spec.get("archive_member") or "")
+            password = str(spec.get("archive_password") or "")
+            with zipfile.ZipFile(io.BytesIO(archive_blob)) as archive:
+                member_bytes = archive.read(member, pwd=password.encode("utf-8") if password else None)
+            builder = BENCH_DATASET_BUILDERS[str(spec.get("builder") or "")]
+            blob = builder(member_bytes)
+            digest = hashlib.sha256(blob).hexdigest()
+            if digest != expected_sha:
+                raise RuntimeError(
+                    f"built dataset sha256 mismatch (expected {expected_sha[:16]}…, "
+                    f"got {digest[:16]}…)"
+                )
+            tmp_path = cache_path + ".tmp"
+            with open(tmp_path, "wb") as fh:
+                fh.write(blob)
+            os.replace(tmp_path, cache_path)
+            if console is not None:
+                console.print(
+                    f"[green]Dataset {dataset_name} extracted, verified, and cached "
+                    f"at {cache_path}[/green]"
+                )
+            return cache_path, digest
+        except Exception as exc:
+            problems.append(f"{archive_url}: {type(exc).__name__}: {exc}")
+    for url in spec.get("urls") or []:
+        if console is not None:
+            console.print(f"[cyan]Downloading pinned dataset {dataset_name} from {url} ...[/cyan]")
+        try:
+            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(180.0, connect=30.0)) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                blob = resp.content
+        except Exception as exc:
+            problems.append(f"{url}: {type(exc).__name__}: {exc}")
+            continue
+        digest = hashlib.sha256(blob).hexdigest()
+        if digest != expected_sha:
+            problems.append(f"{url}: sha256 mismatch (expected {expected_sha[:16]}…, got {digest[:16]}…)")
+            continue
+        tmp_path = cache_path + ".tmp"
+        with open(tmp_path, "wb") as fh:
+            fh.write(blob)
+        os.replace(tmp_path, cache_path)
+        if console is not None:
+            console.print(f"[green]Dataset {dataset_name} verified and cached at {cache_path}[/green]")
+        return cache_path, digest
+    detail = "; ".join(problems) if problems else "no local copy and no reachable URL"
+    raise RuntimeError(
+        f"Cannot resolve pinned dataset '{dataset_name}': {detail}. "
+        f"Place a verified copy at {local_path} (expected sha256 {expected_sha})."
+    )
+
+
+def load_benchmark_dataset_items(
+    profile_name: str,
+    profile: dict,
+    console: Optional[Console] = None,
+) -> tuple[list[dict], dict]:
+    """Load dataset rows and build per-item prompts/expected answers for a profile."""
+    dataset_name = str((profile or {}).get("dataset") or "")
+    path, digest = resolve_benchmark_dataset(dataset_name, console=console)
+    spec = BENCH_DATASETS[dataset_name]
+    rows = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    expected_items = int(spec.get("expected_items") or 0)
+    if expected_items and len(rows) != expected_items:
+        raise RuntimeError(
+            f"Dataset {dataset_name} at {path} has {len(rows)} rows, expected {expected_items}"
+        )
+    items: list[dict] = []
+    if dataset_name == "gsm8k_test":
+        for idx, row in enumerate(rows):
+            question = str(row.get("question") or "").strip()
+            raw_answer = str(row.get("answer") or "")
+            marker = raw_answer.rsplit("#### ", 1)
+            if len(marker) != 2 or not question:
+                raise RuntimeError(f"Dataset {dataset_name} row {idx} is malformed")
+            expected_text = marker[1].strip().replace(",", "")
+            items.append({
+                "item_id": f"gsm8k-{idx:04d}",
+                "category": "",
+                "prompt": question + GSM8K_PROMPT_SUFFIX,
+                "expected_answer": expected_text,
+                "expected_number": float(expected_text),
+            })
+    elif dataset_name == "mmlu_pro_1000":
+        for idx, row in enumerate(rows):
+            question = str(row.get("question") or "").strip()
+            options = [str(o) for o in (row.get("options") or [])]
+            answer = str(row.get("answer") or "").strip().upper()
+            if not question or not options or answer not in MC_OPTION_LETTERS[: len(options)]:
+                raise RuntimeError(f"Dataset {dataset_name} row {idx} is malformed")
+            options_text = "\n".join(
+                f"{MC_OPTION_LETTERS[i]}. {opt}" for i, opt in enumerate(options)
+            )
+            items.append({
+                "item_id": f"mmlupro-{int(row.get('question_id') or idx)}",
+                "category": str(row.get("category") or ""),
+                "prompt": MMLU_PRO_PROMPT_TEMPLATE.format(question=question, options=options_text),
+                "expected_answer": answer,
+                "expected_letter": answer,
+                "num_options": len(options),
+            })
+    elif dataset_name == "gpqa_diamond":
+        for idx, row in enumerate(rows):
+            question = str(row.get("question") or "").strip()
+            options = [str(o) for o in (row.get("options") or [])]
+            answer = str(row.get("answer") or "").strip().upper()
+            if not question or len(options) != 4 or answer not in MC_OPTION_LETTERS[:4]:
+                raise RuntimeError(f"Dataset {dataset_name} row {idx} is malformed")
+            options_text = "\n".join(
+                f"{MC_OPTION_LETTERS[i]}. {opt}" for i, opt in enumerate(options)
+            )
+            items.append({
+                "item_id": f"gpqa-{str(row.get('record_id') or idx)}",
+                "category": str(row.get("category") or ""),
+                "prompt": MMLU_PRO_PROMPT_TEMPLATE.format(question=question, options=options_text),
+                "expected_answer": answer,
+                "expected_letter": answer,
+                "num_options": len(options),
+            })
+    else:
+        raise ValueError(f"No item builder for dataset '{dataset_name}'")
+    meta = {
+        "dataset": dataset_name,
+        "path": path,
+        "sha256": digest,
+        "items_total": len(items),
+        "source": str(spec.get("source") or ""),
+    }
+    return items, meta
+
+
+def stride_select_items(items: list, count: int) -> list:
+    """Deterministic evenly-spread subset preserving dataset order."""
+    n = len(items)
+    if count >= n:
+        return list(items)
+    return [items[(i * n) // count] for i in range(max(1, count))]
+
+
+_LOOSE_NUMBER_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+_MC_ANSWER_TAG_RE = re.compile(r"(?i)\banswer\b[^A-Za-z0-9]{0,12}([A-J])(?![A-Za-z0-9])")
+_MC_ANSWER_IS_RE = re.compile(r"(?i:\banswer\s+is\s*[\*_`\(\[\"']{0,3})([A-J])(?![A-Za-z0-9])")
+_MC_BARE_LETTER_RE = re.compile(r"^[\s>*_`#\-\(\[]*([A-Ja-j])[\s.):\],!*_`\"']*$")
+
+
+def parse_final_number_loose(text: str) -> Optional[float]:
+    """Last number in text; tolerates thousands separators, $/%, and trailing punctuation."""
+    if not text:
+        return None
+    for token in reversed(_LOOSE_NUMBER_RE.findall(text)):
+        try:
+            return float(token.replace(",", ""))
+        except ValueError:
+            continue
+    return None
+
+
+def extract_mc_letter(final_answer: str, content_text: str, num_options: int = 10) -> str:
+    allowed = MC_OPTION_LETTERS[: max(2, min(num_options, len(MC_OPTION_LETTERS)))]
+    matches = list(_MC_ANSWER_TAG_RE.finditer(final_answer or ""))
+    for match in reversed(matches):
+        letter = match.group(1).upper()
+        if letter in allowed:
+            return letter
+    bare = _MC_BARE_LETTER_RE.match((final_answer or "").strip())
+    if bare and bare.group(1).upper() in allowed:
+        return bare.group(1).upper()
+    for pattern in (_MC_ANSWER_TAG_RE, _MC_ANSWER_IS_RE):
+        matches = list(pattern.finditer(content_text or ""))
+        for match in reversed(matches):
+            letter = match.group(1).upper()
+            if letter in allowed:
+                return letter
+    return ""
+
+
 BUILTIN_TEST_PROFILES = {
     "estonia": {
         "description": (
@@ -3937,6 +4294,25 @@ BUILTIN_TEST_PROFILES = {
         "correct_regex": r"\bestonia\b",
         "score_source": "final_answer",
         "default_max_tokens": 40000,
+        "default_concurrency": 30,
+        "default_runs": 30,
+    },
+    "estonia-long": {
+        "description": (
+            "Estonia long-context task with a generic high-reasoning-effort wrapper. "
+            "This tests whether a model can avoid premature short unknown/wrong "
+            "answers without receiving task-specific chain or decoy hints."
+        ),
+        "base_profile": "estonia",
+        "system_prompt": ESTONIA_LONG_SYSTEM_PROMPT,
+        "prompt_prefix": ESTONIA_LONG_PROMPT_PREFIX,
+        "correct_regex": r"\bestonia\b",
+        "score_source": "final_answer",
+        "default_max_tokens": 40000,
+        "token_limit_field": "max_completion_tokens",
+        "request_overrides": {
+            "thinking": {"type": "enabled"},
+        },
         "default_concurrency": 30,
         "default_runs": 30,
     },
@@ -3986,6 +4362,58 @@ BUILTIN_TEST_PROFILES = {
         "default_runs": 10,
         "default_no_prefill_scout": True,
     },
+    "gsm8k": {
+        "description": (
+            "GSM8K accuracy benchmark: the full 1319-problem grade-school math "
+            "test set, one different problem per request, scored by exact "
+            "final-number match. Multi-step generation makes this the primary "
+            "quantization-degradation anchor; compare runs with --compare-baseline."
+        ),
+        "dataset": "gsm8k_test",
+        "scorer": "dataset_gsm8k",
+        "score_source": "final_answer",
+        "default_max_tokens": 32768,
+        "default_temperature": 0.0,
+        "default_concurrency": 30,
+        "default_runs": 0,
+        "default_no_prefill_scout": True,
+    },
+    "mmlu-pro": {
+        "description": (
+            "MMLU-Pro accuracy benchmark: pinned deterministic stratified "
+            "1000-question subset of the TIGER-Lab/MMLU-Pro test split "
+            "(up to 10 options per question), one different question per "
+            "request, scored by exact option-letter match. Knowledge/reasoning "
+            "anchor for quantization comparisons; use with --compare-baseline."
+        ),
+        "dataset": "mmlu_pro_1000",
+        "scorer": "dataset_mc_letter",
+        "score_source": "final_answer",
+        "default_max_tokens": 32768,
+        "default_temperature": 0.0,
+        "default_concurrency": 30,
+        "default_runs": 0,
+        "default_no_prefill_scout": True,
+    },
+    "gpqa-diamond": {
+        "description": (
+            "GPQA Diamond accuracy benchmark: all 198 graduate-level 'Google-proof' "
+            "science questions (biology, chemistry, physics), 4 options per question "
+            "with a deterministic per-item shuffle, scored by exact option-letter "
+            "match. Frontier-difficulty anchor for quantization A/B tests; the small "
+            "item count limits statistical resolution, so read it alongside gsm8k "
+            "and mmlu-pro. Dataset is fetched from the official password-protected "
+            "zip on first use and cached locally; it is never stored in this repo."
+        ),
+        "dataset": "gpqa_diamond",
+        "scorer": "dataset_mc_letter",
+        "score_source": "final_answer",
+        "default_max_tokens": 32768,
+        "default_temperature": 0.0,
+        "default_concurrency": 30,
+        "default_runs": 0,
+        "default_no_prefill_scout": True,
+    },
 }
 
 BUILTIN_TEST_PROFILE_ALIASES = {
@@ -3993,6 +4421,11 @@ BUILTIN_TEST_PROFILE_ALIASES = {
     "lights": "hotel-lights",
     "lavd": "lavd-test",
     "ledger-lavd": "lavd-test",
+    "gsm-8k": "gsm8k",
+    "mmlupro": "mmlu-pro",
+    "mmlu-pro-1000": "mmlu-pro",
+    "gpqa": "gpqa-diamond",
+    "gpqa_diamond": "gpqa-diamond",
 }
 
 METRIC_RE = re.compile(r'^((?:sglang|vllm):\w+)(?:\{([^}]*)\})?\s+([\d.eE+-]+)')
@@ -4133,6 +4566,9 @@ class CompletionStatsRun:
     hit_max_tokens: bool = False
     estimated_tokens: bool = False
     cancelled: bool = False
+    item_id: str = ""
+    category: str = ""
+    expected_answer: str = ""
 
 
 @dataclass
@@ -6764,8 +7200,13 @@ def build_messages(context_tokens: int, context_text: str) -> list:
     return messages
 
 
-def build_user_prompt_messages(prompt: str) -> list:
-    return [{"role": "user", "content": prompt}]
+def build_user_prompt_messages(prompt: str, system_prompt: str = "") -> list:
+    messages = []
+    system_prompt = system_prompt.strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    return messages
 
 
 def extract_final_answer(text: str) -> str:
@@ -6824,6 +7265,7 @@ def score_completion_profile(
     output_text: str,
     regex: str,
     source: str,
+    item: Optional[dict] = None,
 ) -> dict:
     profile = profile or {}
     scorer = str(profile.get("scorer") or "")
@@ -6851,6 +7293,63 @@ def score_completion_profile(
             "score_label": "exact" if is_exact else "fail",
             "score_detail": "exact" if is_exact else f"expected {expected:g}, got {parsed}",
             "parsed_answer": parsed,
+        }
+
+    if scorer == "dataset_gsm8k":
+        expected_value = (item or {}).get("expected_number")
+        if expected_value is None:
+            return {
+                "correct": None,
+                "score_label": "",
+                "score_detail": "no dataset item bound to this request",
+                "parsed_answer": "",
+            }
+        expected_value = float(expected_value)
+        parsed_number = parse_final_number_loose(final_answer)
+        if parsed_number is None:
+            parsed_number = parse_final_number_loose(content_text or output_text)
+        if parsed_number is None:
+            return {
+                "correct": False,
+                "score_label": "fail",
+                "score_detail": "unparseable",
+                "parsed_answer": "",
+            }
+        is_exact = math.isclose(parsed_number, expected_value, rel_tol=0.0, abs_tol=1e-4)
+        return {
+            "correct": is_exact,
+            "score_label": "exact" if is_exact else "fail",
+            "score_detail": "exact" if is_exact else f"expected {expected_value:g}, got {parsed_number:g}",
+            "parsed_answer": f"{parsed_number:g}",
+        }
+
+    if scorer == "dataset_mc_letter":
+        expected_letter = str((item or {}).get("expected_letter") or "").upper()
+        if not expected_letter:
+            return {
+                "correct": None,
+                "score_label": "",
+                "score_detail": "no dataset item bound to this request",
+                "parsed_answer": "",
+            }
+        parsed_letter = extract_mc_letter(
+            final_answer,
+            content_text or output_text,
+            int((item or {}).get("num_options") or 10),
+        )
+        if not parsed_letter:
+            return {
+                "correct": False,
+                "score_label": "fail",
+                "score_detail": "unparseable",
+                "parsed_answer": "",
+            }
+        is_exact = parsed_letter == expected_letter
+        return {
+            "correct": is_exact,
+            "score_label": "exact" if is_exact else "fail",
+            "score_detail": "exact" if is_exact else f"expected {expected_letter}, got {parsed_letter}",
+            "parsed_answer": parsed_letter,
         }
 
     if scorer == "ledger_lavd":
@@ -6920,20 +7419,30 @@ def decode_builtin_test_profile_prompt(profile_name: str) -> tuple[str, str, dic
         known = ", ".join(builtin_test_profile_names()) or "none"
         raise ValueError(f"Unknown test profile '{profile_name}'. Available profiles: {known}")
     try:
-        encoding = str(profile.get("prompt_encoding") or "utf-8")
-        blob = "".join(str(profile.get("prompt_blob") or "").split())
-        if blob:
-            prompt_bytes = zlib.decompress(base64.b64decode(blob))
-            prompt = prompt_bytes.decode(encoding).rstrip("\n")
-        elif profile.get("prompt_text"):
-            prompt = str(profile.get("prompt_text") or "").rstrip("\n")
+        base_profile = str(profile.get("base_profile") or "")
+        if base_profile:
+            prompt, _base_source, _base_profile_config = decode_builtin_test_profile_prompt(base_profile)
         else:
-            csv_blob = "".join(str(profile.get("csv_blob") or "").split())
-            template = str(profile.get("prompt_template") or "")
-            if not csv_blob or not template:
-                raise ValueError(f"Built-in test profile '{profile_name}' has no embedded prompt or CSV blob")
-            csv_data = zlib.decompress(base64.b64decode(csv_blob)).decode(encoding)
-            prompt = template.format(csv_data=csv_data).rstrip("\n")
+            encoding = str(profile.get("prompt_encoding") or "utf-8")
+            blob = "".join(str(profile.get("prompt_blob") or "").split())
+            if blob:
+                prompt_bytes = zlib.decompress(base64.b64decode(blob))
+                prompt = prompt_bytes.decode(encoding).rstrip("\n")
+            elif profile.get("prompt_text"):
+                prompt = str(profile.get("prompt_text") or "").rstrip("\n")
+            else:
+                csv_blob = "".join(str(profile.get("csv_blob") or "").split())
+                template = str(profile.get("prompt_template") or "")
+                if not csv_blob or not template:
+                    raise ValueError(f"Built-in test profile '{profile_name}' has no embedded prompt or CSV blob")
+                csv_data = zlib.decompress(base64.b64decode(csv_blob)).decode(encoding)
+                prompt = template.format(csv_data=csv_data).rstrip("\n")
+        prompt_prefix = str(profile.get("prompt_prefix") or "").strip()
+        prompt_suffix = str(profile.get("prompt_suffix") or "").strip()
+        if prompt_prefix:
+            prompt = f"{prompt_prefix}\n\n{prompt}"
+        if prompt_suffix:
+            prompt = f"{prompt}\n\n{prompt_suffix}"
     except Exception as exc:
         raise ValueError(f"Cannot decode built-in test profile '{profile_name}': {exc}") from exc
     if not prompt:
@@ -7841,9 +8350,12 @@ def metric_name(engine: str, key: str) -> str:
             "spec_accepted_tokens_total": "vllm:spec_decode_num_accepted_tokens_total",
             "gen_tokens_total": "vllm:generation_tokens_total",
             "prompt_tokens_total": "vllm:prompt_tokens_total",
+            "prompt_tokens_by_source": "vllm:prompt_tokens_by_source_total",
+            "prompt_tokens_cached": "vllm:prompt_tokens_cached_total",
             "request_success_total": "vllm:request_success_total",
             "prefill_time_count": "vllm:request_prefill_time_seconds_count",
             "prefill_time_sum": "vllm:request_prefill_time_seconds_sum",
+            "prefill_kv_computed_tokens": "vllm:request_prefill_kv_computed_tokens_sum",
         },
         ENGINE_OPENAI_PROXY: {},
     }
@@ -7853,8 +8365,18 @@ def metric_name(engine: str, key: str) -> str:
 def prefill_counter_snapshot(metrics: dict, engine: str) -> dict:
     """Return counters needed for exact server-side prefill measurement."""
     label_filter = 'stage="prefill_forward"' if engine == ENGINE_SGLANG else ""
+    by_source_name = metric_name(engine, "prompt_tokens_by_source")
     return {
         "prompt_tokens_total": sum_metric(metrics, metric_name(engine, "prompt_tokens_total")),
+        "prompt_tokens_local_compute": sum_metric(
+            metrics, by_source_name, 'source="local_compute"'
+        ),
+        "prompt_tokens_cached": sum_metric(
+            metrics, metric_name(engine, "prompt_tokens_cached")
+        ),
+        "prefill_kv_computed_tokens": sum_metric(
+            metrics, metric_name(engine, "prefill_kv_computed_tokens")
+        ),
         "request_success_total": sum_metric(metrics, metric_name(engine, "request_success_total")),
         "prefill_count": sum_metric(metrics, metric_name(engine, "prefill_time_count"), label_filter),
         "prefill_sum": sum_metric(metrics, metric_name(engine, "prefill_time_sum"), label_filter),
@@ -8149,7 +8671,11 @@ async def stream_completion_stats_request(
     save_text: bool,
     profile_config: Optional[dict] = None,
     progress_callback=None,
+    item: Optional[dict] = None,
 ) -> CompletionStatsRun:
+    item_id = str((item or {}).get("item_id") or "")
+    item_category = str((item or {}).get("category") or "")
+    item_expected = str((item or {}).get("expected_answer") or "")
     req_start = time.monotonic()
     first_token = None
     second_token = None
@@ -8202,6 +8728,9 @@ async def stream_completion_stats_request(
                     concurrency=concurrency,
                     ok=False,
                     error=f"HTTP {resp.status_code}: {body.decode(errors='replace')[:500]}",
+                    item_id=item_id,
+                    category=item_category,
+                    expected_answer=item_expected,
                 )
 
             await emit_progress("waiting TTFT", force=True)
@@ -8259,6 +8788,9 @@ async def stream_completion_stats_request(
             concurrency=concurrency,
             ok=False,
             error=f"{type(exc).__name__}: {exc}",
+            item_id=item_id,
+            category=item_category,
+            expected_answer=item_expected,
         )
 
     req_end = time.monotonic()
@@ -8286,6 +8818,7 @@ async def stream_completion_stats_request(
         output_text=output_text,
         regex=correct_regex,
         source=score_source,
+        item=item,
     )
     excerpt_source = output_text if save_text else final_answer
     excerpt = (excerpt_source or "").replace("\n", " ")[:240]
@@ -8317,6 +8850,9 @@ async def stream_completion_stats_request(
         hit_max_tokens=finish_reason == "length",
         estimated_tokens=estimated_tokens,
         cancelled=cancelled,
+        item_id=item_id,
+        category=item_category,
+        expected_answer=item_expected,
     )
 
 
@@ -8341,6 +8877,7 @@ async def run_one_cell(
     request_count: int = 0,
     warmup_request_count: int = 0,
     cell_warmup_timeout_seconds: Optional[float] = None,
+    temperature: Optional[float] = None,
 ) -> CellResult:
     messages = build_messages(context_tokens, context_text)
     stream_options = {"include_usage": True}
@@ -8361,6 +8898,8 @@ async def run_one_cell(
     }
     if ignore_eos:
         payload["ignore_eos"] = True
+    if temperature is not None:
+        payload["temperature"] = temperature
 
     url = f"{base_url}/v1/chat/completions"
     cancel_event = asyncio.Event()
@@ -8429,6 +8968,61 @@ async def run_one_cell(
             state.prefill_last_seconds = 0.0
             add_event(state, f"integrated prefill start ctx={format_context(context_tokens)}")
             live.update(build_display(state))
+        server_validation = {
+            "server_tok_per_sec": 0.0,
+            "server_prefill_time": 0.0,
+            "server_prompt_tokens": 0,
+            "server_samples": 0,
+            "server_method": "",
+            "server_invalid_reason": "",
+        }
+        collect_server_validation = False
+        before_prefill_counters = {}
+        if should_record_prefill and state.metrics_available:
+            label_filter = 'stage="prefill_forward"' if engine == ENGINE_SGLANG else ""
+            try:
+                probe_metrics = await scrape_metrics(client, base_url)
+                collect_server_validation = (
+                    (
+                        has_metric(
+                            probe_metrics,
+                            metric_name(engine, "prefill_kv_computed_tokens"),
+                        )
+                        or has_metric(
+                            probe_metrics,
+                            metric_name(engine, "prompt_tokens_by_source"),
+                            'source="local_compute"',
+                        )
+                        or has_metric(
+                            probe_metrics,
+                            metric_name(engine, "prompt_tokens_total"),
+                        )
+                    )
+                    and has_metric(
+                        probe_metrics,
+                        metric_name(engine, "prefill_time_sum"),
+                        label_filter,
+                    )
+                )
+                if collect_server_validation:
+                    before_metrics = await wait_server_idle(
+                        client,
+                        base_url,
+                        engine,
+                        state=state,
+                        live=live,
+                        status="waiting for server idle before integrated prefill scout",
+                    )
+                    before_prefill_counters = prefill_counter_snapshot(
+                        before_metrics,
+                        engine,
+                    )
+            except Exception as exc:
+                collect_server_validation = False
+                server_validation["server_invalid_reason"] = (
+                    f"Prometheus prefill validation unavailable before scout: "
+                    f"{type(exc).__name__}: {exc}"
+                )
         async def run_scout_request():
             scout_t0 = time.monotonic()
             scout_ttft = None
@@ -8483,6 +9077,69 @@ async def run_one_cell(
                 scout_ttft = time.monotonic() - scout_wall_start
             prompt_tokens = int(scout_prompt_tokens or context_tokens)
             tok_per_sec = (prompt_tokens / scout_ttft) if scout_ttft > 0 else 0.0
+            if collect_server_validation:
+                try:
+                    after_metrics = await wait_server_idle(
+                        client,
+                        base_url,
+                        engine,
+                        state=state,
+                        live=live,
+                        status="waiting for server idle after integrated prefill scout",
+                    )
+                    after = prefill_counter_snapshot(after_metrics, engine)
+                    d = counter_delta(after, before_prefill_counters)
+                    request_prompt_tokens = int(round(d.get("prompt_tokens_total", 0.0)))
+                    kv_computed_tokens = int(round(d.get("prefill_kv_computed_tokens", 0.0)))
+                    local_compute_tokens = int(round(d.get("prompt_tokens_local_compute", 0.0)))
+                    cached_tokens = int(round(d.get("prompt_tokens_cached", 0.0)))
+                    server_token_source = "request_total"
+                    server_prompt_tokens = request_prompt_tokens
+                    if engine == ENGINE_VLLM and kv_computed_tokens > 0:
+                        server_prompt_tokens = kv_computed_tokens
+                        server_token_source = "kv_computed"
+                    elif engine == ENGINE_VLLM and local_compute_tokens > 0:
+                        server_prompt_tokens = local_compute_tokens
+                        server_token_source = "local_compute"
+                    prefill_seconds = d.get("prefill_sum", 0.0)
+                    prefill_count = d.get("prefill_count", 0.0)
+                    request_success = d.get("request_success_total", 0.0)
+                    valid = (
+                        0.5 <= prefill_count <= 1.5
+                        and 0.5 <= request_success <= 1.5
+                        and server_prompt_tokens > 0
+                        and prefill_seconds > 0
+                    )
+                    if (
+                        scout_prompt_tokens is not None
+                        and server_prompt_tokens > 0
+                        and server_token_source == "request_total"
+                    ):
+                        valid = valid and abs(server_prompt_tokens - scout_prompt_tokens) <= 1
+                    if valid:
+                        server_validation.update({
+                            "server_tok_per_sec": server_prompt_tokens / prefill_seconds,
+                            "server_prefill_time": prefill_seconds,
+                            "server_prompt_tokens": server_prompt_tokens,
+                            "server_samples": 1,
+                            "server_method": f"prometheus:{server_token_source}",
+                            "server_invalid_reason": "",
+                        })
+                    else:
+                        server_validation["server_invalid_reason"] = (
+                            f"prefill_count={prefill_count}, "
+                            f"request_success={request_success}, "
+                            f"prompt_tokens={server_prompt_tokens}, "
+                            f"token_source={server_token_source}, "
+                            f"request_prompt_tokens={request_prompt_tokens}, "
+                            f"cached_tokens={cached_tokens}, "
+                            f"prefill_seconds={prefill_seconds:.6f}"
+                        )
+                except Exception as exc:
+                    server_validation["server_invalid_reason"] = (
+                        f"Prometheus prefill validation unavailable after scout: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
             state.prefill_results[context_tokens] = {
                 "method": "integrated_scout",
                 "ttft": scout_ttft,
@@ -8490,12 +9147,7 @@ async def run_one_cell(
                 "tok_per_sec": tok_per_sec,
                 "prompt_tokens": prompt_tokens,
                 "samples": 1,
-                "server_tok_per_sec": 0.0,
-                "server_prefill_time": 0.0,
-                "server_prompt_tokens": 0,
-                "server_samples": 0,
-                "server_method": "",
-                "server_invalid_reason": "",
+                **server_validation,
             }
             snapshot_partial_prefill(state)
             state.prefill_samples_done = 1
@@ -10277,6 +10929,9 @@ def render_completion_stats_display(state: dict) -> Panel:
     panel_title = (
         "LAVD Test" if state.get("profile") == "lavd-test" else
         "Hotel Lights Test" if state.get("profile") == "hotel-lights" else
+        "GSM8K Accuracy" if state.get("profile") == "gsm8k" else
+        "MMLU-Pro Accuracy" if state.get("profile") == "mmlu-pro" else
+        "GPQA Diamond Accuracy" if state.get("profile") == "gpqa-diamond" else
         "Completion Token Stats"
     )
     return Panel(
@@ -10299,8 +10954,18 @@ async def run_completion_stats_batch(
     args,
     state: dict,
     live: object,
+    items: Optional[list] = None,
+    items_index_base: int = 0,
 ) -> tuple[list[CompletionStatsRun], int]:
     url = f"{base_url}/v1/chat/completions"
+
+    def item_for_run(run_index: int) -> Optional[dict]:
+        if items is None:
+            return None
+        offset = run_index - items_index_base
+        if 0 <= offset < len(items):
+            return items[offset]
+        return None
     queue: asyncio.Queue[int] = asyncio.Queue()
     for idx in range(run_index_start, run_index_start + request_count):
         queue.put_nowait(idx)
@@ -10352,10 +11017,14 @@ async def run_completion_stats_batch(
                 }
                 live.update(render_completion_stats_display(state))
             try:
+                run_item = item_for_run(run_index)
+                run_payload = dict(payload)
+                if run_item is not None and run_item.get("messages"):
+                    run_payload["messages"] = run_item["messages"]
                 run = await stream_completion_stats_request(
                     client=client,
                     url=url,
-                    payload=dict(payload),
+                    payload=run_payload,
                     run_index=run_index,
                     phase=phase,
                     concurrency=concurrency,
@@ -10364,6 +11033,7 @@ async def run_completion_stats_batch(
                     save_text=args.completion_stats_save_text,
                     profile_config=getattr(args, "completion_stats_profile_config", {}) or {},
                     progress_callback=progress_callback,
+                    item=run_item,
                 )
             except asyncio.CancelledError:
                 async with lock:
@@ -10424,6 +11094,7 @@ async def run_completion_stats_scout(
     live: object,
 ) -> CompletionStatsRun:
     scout_payload = dict(payload)
+    scout_payload.pop("max_completion_tokens", None)
     scout_payload["max_tokens"] = 1
     state["phase"] = "prefill scout"
     prompt_est = int(state.get("prompt_est_tokens") or 0)
@@ -10519,6 +11190,26 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
     )
     scorer = str(metadata.get("profile_scorer") or "")
     intro = (
+        "[bold]GSM8K Accuracy Benchmark[/bold]\n"
+        "Every request is a different problem from the pinned GSM8K test set, scored "
+        "by exact final-number match against the reference answer. Accuracy with a "
+        "Wilson 95% interval is the headline metric; completion tokens show reasoning "
+        "cost. Use --compare-baseline for paired A/B comparison across quantizations. "
+    ) if scorer == "dataset_gsm8k" else (
+        "[bold]GPQA Diamond Accuracy Benchmark[/bold]\n"
+        "Every request is a different graduate-level 'Google-proof' science question "
+        "(198 items; biology, chemistry, physics; 4 options with a deterministic "
+        "per-item shuffle), scored by exact option-letter match. Frontier-difficulty "
+        "anchor; note the small item count limits statistical resolution — read it "
+        "alongside gsm8k and mmlu-pro. Use --compare-baseline for paired A/B comparison. "
+    ) if str(metadata.get("test_profile") or "") == "gpqa-diamond" else (
+        "[bold]MMLU-Pro Accuracy Benchmark[/bold]\n"
+        "Every request is a different question from the pinned stratified 1000-question "
+        "MMLU-Pro subset (multiple choice, up to 10 options), scored by exact option-letter "
+        "match. Accuracy with a Wilson 95% interval is the headline metric; per-category "
+        "accuracy locates where configurations differ. Use --compare-baseline for paired "
+        "A/B comparison across quantizations. "
+    ) if scorer == "dataset_mc_letter" else (
         "[bold]LAVD Context Consistency Test[/bold]\n"
         "Arithmetic is intentionally simple; the test checks whether the model keeps "
         "a long structured context consistent, finds human data-entry errors, applies "
@@ -10550,6 +11241,12 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
     profile_table.add_row("profile", metadata.get("test_profile") or "custom")
     profile_table.add_row("prompt", metadata.get("prompt_source") or "")
     profile_table.add_row("prompt chars", f"{int(metadata.get('prompt_chars') or 0):,}")
+    if metadata.get("dataset"):
+        profile_table.add_row(
+            "dataset",
+            f"{metadata.get('dataset')} "
+            f"({metadata.get('dataset_items_selected') or 0}/{metadata.get('dataset_items_total') or 0} items)",
+        )
     profile_table.add_row("requested runs", str(metadata.get("requested_runs") or metadata.get("min_results") or ""))
     profile_table.add_row("concurrency", str(fixed or report.get("selected_concurrency") or "adaptive"))
     max_tokens_meta = metadata.get("max_tokens")
@@ -10605,6 +11302,18 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
         selected_table.add_row("score", format_completion_score_summary(selected))
         if selected.get("score_counts"):
             selected_table.add_row("stars", f"{completion_star_bar(selected)} 👍")
+    accuracy = report.get("accuracy") or {}
+    if accuracy:
+        selected_table.add_row(
+            "accuracy",
+            f"{accuracy['accuracy'] * 100:.2f}% ({accuracy['correct']}/{accuracy['scored']})",
+        )
+        selected_table.add_row(
+            "Wilson 95% CI",
+            f"{accuracy['wilson95_low'] * 100:.2f}% – {accuracy['wilson95_high'] * 100:.2f}%",
+        )
+        if accuracy.get("unparseable"):
+            selected_table.add_row("unparseable answers", str(accuracy["unparseable"]))
     selected_table.add_row("hit max_tokens", str(selected["hit_max_tokens"]))
     selected_table.add_row("completion tokens avg", f"{selected['completion_tokens']['avg']:,.0f}")
     selected_table.add_row("completion tokens p50", f"{selected['completion_tokens']['p50']:,.0f}")
@@ -10616,6 +11325,27 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
     selected_table.add_row("mean per-request gen tok/s", f"{selected['gen_tok_s']['avg']:,.1f}")
     console.print(selected_table)
 
+    if report.get("category_summaries"):
+        cat_table = Table(
+            title=render_title("Per-category Accuracy"),
+            title_justify="left",
+            box=REPORT_BOX,
+            border_style=SUBTLE_BORDER,
+            header_style=f"bold {PHOSPHOR_DIM}",
+        )
+        cat_table.add_column("category", style=f"bold {PHOSPHOR_SOFT}")
+        cat_table.add_column("scored", justify="right")
+        cat_table.add_column("correct", justify="right")
+        cat_table.add_column("accuracy", justify="right")
+        for row in report["category_summaries"]:
+            cat_table.add_row(
+                str(row.get("category") or ""),
+                str(row.get("scored") or 0),
+                str(row.get("correct") or 0),
+                f"{(row.get('accuracy') or 0.0) * 100:.1f}%",
+            )
+        console.print(cat_table)
+
     if report.get("wrong_runs"):
         wrong = Table(
             title=render_title("Failed Final Answers"),
@@ -10624,24 +11354,33 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
             border_style=SUBTLE_BORDER,
             header_style=f"bold {PHOSPHOR_DIM}",
         )
+        shown_wrong = report["wrong_runs"][:12]
+        has_items = any(row.get("item_id") for row in shown_wrong)
         wrong.add_column("#", justify="right", no_wrap=True)
+        if has_items:
+            wrong.add_column("item", no_wrap=True)
         wrong.add_column("C", justify="right", no_wrap=True)
         wrong.add_column("tokens", justify="right", no_wrap=True)
         wrong.add_column("score", justify="center", no_wrap=True)
         wrong.add_column("final answer")
-        for row in report["wrong_runs"][:12]:
+        for row in shown_wrong:
             parsed = row.get("parsed_answer") or ""
             detail = row.get("score_detail") or ""
             answer = row.get("final_answer", "")[:140]
             if parsed:
                 answer = f"{parsed} ({detail}) | {answer}" if detail else f"{parsed} | {answer}"
-            wrong.add_row(
-                str(row["run_index"]),
+            elif detail:
+                answer = f"({detail}) | {answer}"
+            cells = [str(row["run_index"])]
+            if has_items:
+                cells.append(str(row.get("item_id") or "-"))
+            cells.extend([
                 str(row["concurrency"]),
                 f"{row['completion_tokens']:,}",
                 str(row.get("score_label") or "fail").upper(),
                 answer,
-            )
+            ])
+            wrong.add_row(*cells)
         console.print(wrong)
 
     if str(metadata.get("profile_scorer") or "") == "ledger_lavd":
@@ -10657,6 +11396,15 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
             "FAIL means the answer was unparseable or a different number. The 10-slot quality bar "
             "is a rounded distribution: ★=EXACT, ✕=FAIL.[/dim]"
         )
+    elif str(metadata.get("profile_scorer") or "") in ("dataset_gsm8k", "dataset_mc_letter"):
+        console.print(
+            "[dim]Interpretation: every measured request is a distinct pinned dataset item, so the "
+            "correctness rate is dataset accuracy, not a resample pass-rate; the Wilson 95% interval "
+            "reflects item-count resolution. For quantization A/B tests keep engine version and flags "
+            "identical, run the same profile against each endpoint, and pass --compare-baseline to get "
+            "paired per-item deltas with an exact McNemar significance test. Completion-token inflation "
+            "and max_tokens hits are early damage signals even before accuracy moves.[/dim]"
+        )
     else:
         console.print(
             "[dim]Interpretation: completion-token p50/p90/p99 tells how many decode tokens the model needed "
@@ -10667,6 +11415,283 @@ def print_completion_stats_results(report: dict, console: Console) -> None:
             "Concurrency Results groups completed requests by parallelism; Completed Requests shows the latest "
             "individual finished answers.[/dim]"
         )
+
+
+def wilson_interval(correct: int, total: int, z: float = 1.959964) -> tuple[float, float]:
+    """Wilson score 95% interval for a binomial proportion."""
+    if total <= 0:
+        return 0.0, 0.0
+    p = correct / total
+    denom = 1.0 + z * z / total
+    center = (p + z * z / (2 * total)) / denom
+    half = z * math.sqrt(p * (1.0 - p) / total + z * z / (4 * total * total)) / denom
+    return max(0.0, center - half), min(1.0, center + half)
+
+
+def mcnemar_exact_p(b: int, c: int) -> float:
+    """Two-sided exact McNemar p-value from discordant pair counts b and c."""
+    n = b + c
+    if n <= 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(math.comb(n, i) for i in range(k + 1))
+    return min(1.0, 2.0 * (tail / (2 ** n)))
+
+
+def _comparison_side_info(report: dict, label: str) -> dict:
+    metadata = report.get("metadata") or {}
+    return {
+        "label": label,
+        "model": str(metadata.get("model") or ""),
+        "server": str(metadata.get("server") or ""),
+        "engine": str(metadata.get("engine") or ""),
+        "timestamp": str(metadata.get("timestamp") or ""),
+        "test_profile": str(metadata.get("test_profile") or ""),
+        "dataset": str(metadata.get("dataset") or ""),
+        "dataset_sha256": str(metadata.get("dataset_sha256") or ""),
+        "temperature": metadata.get("temperature"),
+        "max_tokens": metadata.get("max_tokens"),
+    }
+
+
+def _scored_runs_by_item(report: dict) -> dict:
+    by_item: dict = {}
+    for run in report.get("runs") or []:
+        item_id = str(run.get("item_id") or "")
+        if not item_id or run.get("correct") is None:
+            continue
+        by_item[item_id] = run
+    return by_item
+
+
+def build_paired_comparison(
+    baseline_report: dict,
+    candidate_report: dict,
+    baseline_label: str = "baseline",
+    candidate_label: str = "candidate",
+) -> dict:
+    base_runs = _scored_runs_by_item(baseline_report)
+    cand_runs = _scored_runs_by_item(candidate_report)
+    paired_ids = sorted(set(base_runs) & set(cand_runs))
+    base_info = _comparison_side_info(baseline_report, baseline_label)
+    cand_info = _comparison_side_info(candidate_report, candidate_label)
+    result = {
+        "baseline": base_info,
+        "candidate": cand_info,
+        "paired_items": len(paired_ids),
+        "baseline_scored_items": len(base_runs),
+        "candidate_scored_items": len(cand_runs),
+        "profile_match": base_info["test_profile"] == cand_info["test_profile"],
+        "dataset_match": (
+            base_info["dataset_sha256"] == cand_info["dataset_sha256"]
+            if (base_info["dataset_sha256"] or cand_info["dataset_sha256"]) else True
+        ),
+    }
+    if not paired_ids:
+        result["error"] = (
+            "No overlapping scored item_ids between the two reports. Paired comparison "
+            "needs two runs of the same dataset test profile (e.g. gsm8k or mmlu-pro)."
+        )
+        return result
+    base_correct_ids = {i for i in paired_ids if bool(base_runs[i].get("correct"))}
+    cand_correct_ids = {i for i in paired_ids if bool(cand_runs[i].get("correct"))}
+    flips_base_only = sorted(base_correct_ids - cand_correct_ids)
+    flips_cand_only = sorted(cand_correct_ids - base_correct_ids)
+    n_paired = len(paired_ids)
+    base_acc = len(base_correct_ids) / n_paired
+    cand_acc = len(cand_correct_ids) / n_paired
+    p_value = mcnemar_exact_p(len(flips_base_only), len(flips_cand_only))
+    base_tokens = [float(base_runs[i].get("completion_tokens") or 0) for i in paired_ids]
+    cand_tokens = [float(cand_runs[i].get("completion_tokens") or 0) for i in paired_ids]
+    base_token_mean = mean(base_tokens) if base_tokens else 0.0
+    cand_token_mean = mean(cand_tokens) if cand_tokens else 0.0
+    per_category: dict[str, dict] = {}
+    for item_id in paired_ids:
+        category = str(
+            cand_runs[item_id].get("category") or base_runs[item_id].get("category") or ""
+        )
+        if not category:
+            continue
+        row = per_category.setdefault(category, {
+            "category": category,
+            "paired": 0,
+            "baseline_correct": 0,
+            "candidate_correct": 0,
+        })
+        row["paired"] += 1
+        row["baseline_correct"] += 1 if item_id in base_correct_ids else 0
+        row["candidate_correct"] += 1 if item_id in cand_correct_ids else 0
+    category_rows = [
+        {
+            **row,
+            "baseline_accuracy": row["baseline_correct"] / row["paired"],
+            "candidate_accuracy": row["candidate_correct"] / row["paired"],
+            "delta_pp": (row["candidate_correct"] - row["baseline_correct"]) / row["paired"] * 100.0,
+        }
+        for row in sorted(per_category.values(), key=lambda r: r["category"])
+    ]
+
+    def _count_detail(runs: dict, detail: str) -> int:
+        return len([
+            i for i in paired_ids
+            if str(runs[i].get("score_detail") or "") == detail
+        ])
+
+    result.update({
+        "baseline_correct": len(base_correct_ids),
+        "candidate_correct": len(cand_correct_ids),
+        "baseline_accuracy": base_acc,
+        "candidate_accuracy": cand_acc,
+        "baseline_wilson95": list(wilson_interval(len(base_correct_ids), n_paired)),
+        "candidate_wilson95": list(wilson_interval(len(cand_correct_ids), n_paired)),
+        "delta_pp": (cand_acc - base_acc) * 100.0,
+        "flips_baseline_only_correct": len(flips_base_only),
+        "flips_candidate_only_correct": len(flips_cand_only),
+        "flip_item_ids": {
+            "baseline_only_correct": flips_base_only[:100],
+            "candidate_only_correct": flips_cand_only[:100],
+        },
+        "mcnemar_exact_p": p_value,
+        "significant_at_0_05": p_value < 0.05,
+        "completion_tokens": {
+            "baseline_mean": base_token_mean,
+            "candidate_mean": cand_token_mean,
+            "baseline_p50": percentile(base_tokens, 50),
+            "candidate_p50": percentile(cand_tokens, 50),
+            "baseline_p90": percentile(base_tokens, 90),
+            "candidate_p90": percentile(cand_tokens, 90),
+            "ratio_mean": (cand_token_mean / base_token_mean) if base_token_mean > 0 else 0.0,
+        },
+        "hit_max_tokens": {
+            "baseline": len([i for i in paired_ids if base_runs[i].get("hit_max_tokens")]),
+            "candidate": len([i for i in paired_ids if cand_runs[i].get("hit_max_tokens")]),
+        },
+        "unparseable": {
+            "baseline": _count_detail(base_runs, "unparseable"),
+            "candidate": _count_detail(cand_runs, "unparseable"),
+        },
+        "per_category": category_rows,
+    })
+    return result
+
+
+def print_paired_comparison(comparison: dict, console: Console) -> None:
+    console.print()
+    base = comparison.get("baseline") or {}
+    cand = comparison.get("candidate") or {}
+    if comparison.get("error"):
+        console.print(Panel(
+            f"[red]{comparison['error']}[/red]",
+            title=render_title("Paired A/B Comparison"),
+            box=PANEL_BOX,
+            border_style="red",
+        ))
+        return
+    header_bits = []
+    if not comparison.get("profile_match", True):
+        header_bits.append("[yellow]warning: the two runs use different test profiles[/yellow]")
+    if not comparison.get("dataset_match", True):
+        header_bits.append("[yellow]warning: the two runs use different dataset pins[/yellow]")
+    header_text = (
+        f"Paired per-item comparison over {comparison['paired_items']} shared items.\n"
+        f"baseline:  {base.get('model')} @ {base.get('server')} ({base.get('timestamp')})\n"
+        f"candidate: {cand.get('model')} @ {cand.get('server')} ({cand.get('timestamp')})"
+    )
+    if header_bits:
+        header_text += "\n" + "\n".join(header_bits)
+    console.print(Panel(
+        header_text,
+        title=render_title("Paired A/B Comparison"),
+        box=PANEL_BOX,
+        border_style=FRAME_BORDER,
+    ))
+
+    table = Table(
+        title=render_title("Accuracy"),
+        title_justify="left",
+        box=REPORT_BOX,
+        border_style=SUBTLE_BORDER,
+        header_style=f"bold {PHOSPHOR_DIM}",
+    )
+    table.add_column("metric", style=f"bold {PHOSPHOR_SOFT}")
+    table.add_column("baseline", justify="right")
+    table.add_column("candidate", justify="right")
+    base_ci = comparison.get("baseline_wilson95") or [0.0, 0.0]
+    cand_ci = comparison.get("candidate_wilson95") or [0.0, 0.0]
+    table.add_row(
+        "accuracy",
+        f"{comparison['baseline_accuracy'] * 100:.2f}% ({comparison['baseline_correct']}/{comparison['paired_items']})",
+        f"{comparison['candidate_accuracy'] * 100:.2f}% ({comparison['candidate_correct']}/{comparison['paired_items']})",
+    )
+    table.add_row(
+        "Wilson 95% CI",
+        f"{base_ci[0] * 100:.2f}% – {base_ci[1] * 100:.2f}%",
+        f"{cand_ci[0] * 100:.2f}% – {cand_ci[1] * 100:.2f}%",
+    )
+    tokens = comparison.get("completion_tokens") or {}
+    table.add_row(
+        "completion tokens avg",
+        f"{tokens.get('baseline_mean', 0):,.0f}",
+        f"{tokens.get('candidate_mean', 0):,.0f}",
+    )
+    table.add_row(
+        "completion tokens p90",
+        f"{tokens.get('baseline_p90', 0):,.0f}",
+        f"{tokens.get('candidate_p90', 0):,.0f}",
+    )
+    hit_max = comparison.get("hit_max_tokens") or {}
+    table.add_row("hit max_tokens", str(hit_max.get("baseline", 0)), str(hit_max.get("candidate", 0)))
+    unparseable = comparison.get("unparseable") or {}
+    table.add_row("unparseable", str(unparseable.get("baseline", 0)), str(unparseable.get("candidate", 0)))
+    console.print(table)
+
+    delta_pp = comparison.get("delta_pp", 0.0)
+    p_value = comparison.get("mcnemar_exact_p", 1.0)
+    delta_style = "green" if delta_pp > 0 else ("red" if delta_pp < 0 else "white")
+    ratio = tokens.get("ratio_mean", 0.0)
+    inflation = f"{(ratio - 1.0) * 100:+.1f}%" if ratio > 0 else "n/a"
+    verdict = (
+        f"significant at α=0.05 (exact McNemar p={p_value:.4g})"
+        if comparison.get("significant_at_0_05") else
+        f"not significant at α=0.05 (exact McNemar p={p_value:.4g})"
+    )
+    console.print(Panel(
+        f"Δ accuracy: [{delta_style}]{delta_pp:+.2f} pp[/{delta_style}] — {verdict}\n"
+        f"flips: {comparison['flips_baseline_only_correct']} items correct only in baseline, "
+        f"{comparison['flips_candidate_only_correct']} only in candidate\n"
+        f"completion-token inflation (candidate vs baseline mean): {inflation}\n"
+        "[dim]Tip: run the same profile twice against the same server first; that self-flip "
+        "rate is the noise floor a real degradation must exceed.[/dim]",
+        title=render_title("Verdict"),
+        box=PANEL_BOX,
+        border_style=FRAME_BORDER,
+    ))
+
+    per_category = comparison.get("per_category") or []
+    if per_category:
+        cat_table = Table(
+            title=render_title("Per-category (worst delta first)"),
+            title_justify="left",
+            box=REPORT_BOX,
+            border_style=SUBTLE_BORDER,
+            header_style=f"bold {PHOSPHOR_DIM}",
+        )
+        cat_table.add_column("category", style=f"bold {PHOSPHOR_SOFT}")
+        cat_table.add_column("paired", justify="right")
+        cat_table.add_column("baseline", justify="right")
+        cat_table.add_column("candidate", justify="right")
+        cat_table.add_column("Δ pp", justify="right")
+        for row in sorted(per_category, key=lambda r: r.get("delta_pp", 0.0)):
+            row_delta = row.get("delta_pp", 0.0)
+            row_style = "red" if row_delta < 0 else ("green" if row_delta > 0 else "white")
+            cat_table.add_row(
+                row["category"],
+                str(row["paired"]),
+                f"{row['baseline_accuracy'] * 100:.1f}%",
+                f"{row['candidate_accuracy'] * 100:.1f}%",
+                f"[{row_style}]{row_delta:+.1f}[/{row_style}]",
+            )
+        console.print(cat_table)
 
 
 async def run_completion_stats_benchmark(args) -> dict:
@@ -10680,14 +11705,44 @@ async def run_completion_stats_benchmark(args) -> dict:
         base_url = f"http://{args.host}:{args.port or 5000}"
     auth_headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
     console = Console()
-    prompt, prompt_source = load_completion_stats_prompt(args)
     profile = BUILTIN_TEST_PROFILES.get(getattr(args, "test_profile", "") or "")
     profile_name = getattr(args, "test_profile", "") or ""
     setattr(args, "completion_stats_profile_config", profile or {})
+    dataset_name = str((profile or {}).get("dataset") or "")
+    dataset_items: list = []
+    dataset_meta: dict = {}
+    selected_items: Optional[list] = None
+    if dataset_name:
+        dataset_items = list(getattr(args, "completion_stats_dataset_items", None) or [])
+        dataset_meta = dict(getattr(args, "completion_stats_dataset_meta", None) or {})
+        if not dataset_items:
+            dataset_items, dataset_meta = load_benchmark_dataset_items(
+                profile_name, profile or {}, console=console,
+            )
+        prompt = str(dataset_items[0].get("prompt") or "")
+        prompt_source = f"dataset:{dataset_name} ({len(dataset_items)} items)"
+    else:
+        prompt, prompt_source = load_completion_stats_prompt(args)
     fixed_concurrency = int(getattr(args, "completion_stats_concurrency", 0) or 0)
     requested_runs = int(getattr(args, "completion_stats_runs", 0) or 0)
     if requested_runs > 0:
         args.completion_stats_min_results = requested_runs
+    if dataset_items:
+        if requested_runs <= 0 and not cli_option_present("--completion-stats-min-results"):
+            args.completion_stats_min_results = len(dataset_items)
+        if args.completion_stats_min_results > len(dataset_items):
+            console.print(
+                f"[yellow]Requested {args.completion_stats_min_results} runs but dataset "
+                f"{dataset_name} has {len(dataset_items)} items; capping at "
+                f"{len(dataset_items)} (each item is asked once).[/yellow]"
+            )
+            args.completion_stats_min_results = len(dataset_items)
+        selected_items = stride_select_items(dataset_items, args.completion_stats_min_results)
+        system_prompt_text = str((profile or {}).get("system_prompt") or "")
+        for entry in selected_items:
+            entry["messages"] = build_user_prompt_messages(
+                str(entry.get("prompt") or ""), system_prompt_text,
+            )
     levels = [int(x) for x in args.completion_stats_concurrency_levels.split(",") if x.strip()]
     levels = sorted(dict.fromkeys([c for c in levels if c > 0]))
     if not levels:
@@ -10697,7 +11752,7 @@ async def run_completion_stats_benchmark(args) -> dict:
     elif levels[0] != 1:
         levels.insert(0, 1)
 
-    if args.max_tokens == 2048 and "--max-tokens" not in sys.argv:
+    if "--max-tokens" not in sys.argv:
         default_max_tokens = (profile or {}).get("default_max_tokens")
         args.max_tokens = int(default_max_tokens) if default_max_tokens is not None else 40000
 
@@ -10757,17 +11812,27 @@ async def run_completion_stats_benchmark(args) -> dict:
 
         payload = {
             "model": args.model,
-            "messages": build_user_prompt_messages(prompt),
+            "messages": build_user_prompt_messages(prompt, str((profile or {}).get("system_prompt") or "")),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        token_limit_field = str((profile or {}).get("token_limit_field") or "max_tokens")
+        if token_limit_field not in ("max_tokens", "max_completion_tokens"):
+            token_limit_field = "max_tokens"
         if args.max_tokens > 0:
-            payload["max_tokens"] = args.max_tokens
+            payload[token_limit_field] = args.max_tokens
         if args.completion_stats_temperature is not None:
             payload["temperature"] = args.completion_stats_temperature
         if args.completion_stats_top_p is not None:
             payload["top_p"] = args.completion_stats_top_p
+        request_overrides = (profile or {}).get("request_overrides") or {}
+        if request_overrides:
+            payload.update(json.loads(json.dumps(request_overrides)))
 
+        prompt_chars_for_estimate = (
+            int(mean([len(str(entry.get("prompt") or "")) for entry in selected_items]))
+            if selected_items else len(prompt)
+        )
         state = {
             "phase": "starting",
             "console_width": console.width,
@@ -10779,7 +11844,7 @@ async def run_completion_stats_benchmark(args) -> dict:
             "best_concurrency": "-",
             "best_tps": 0.0,
             "profile": profile_name or "custom",
-            "prompt_est_tokens": max(1, int(len(prompt) / CHARS_PER_TOKEN)),
+            "prompt_est_tokens": max(1, int(prompt_chars_for_estimate / CHARS_PER_TOKEN)),
             "kv_budget": server_kv_budget,
             "kv_source": server_kv_source,
             "max_running_requests": server_max_running,
@@ -10802,6 +11867,7 @@ async def run_completion_stats_benchmark(args) -> dict:
         best_concurrency = levels[0]
         best_tps = 0.0
         non_improving = 0
+        dataset_exhausted = False
 
         with live_cm as live:
             if not args.completion_stats_no_prefill_scout:
@@ -10822,6 +11888,8 @@ async def run_completion_stats_benchmark(args) -> dict:
                     args=args,
                     state=state,
                     live=live,
+                    items=selected_items,
+                    items_index_base=next_run_index,
                 )
                 all_runs.extend(batch)
                 best_concurrency = fixed_concurrency
@@ -10845,6 +11913,12 @@ async def run_completion_stats_benchmark(args) -> dict:
                     probe_count = max(1, concurrency * args.completion_stats_probe_waves)
                     if concurrency == 1:
                         probe_count = max(1, args.completion_stats_probe_waves)
+                    if selected_items is not None:
+                        items_remaining = len(selected_items) - (next_run_index - 1)
+                        if items_remaining <= 0:
+                            dataset_exhausted = True
+                            break
+                        probe_count = min(probe_count, items_remaining)
                     batch, next_run_index = await run_completion_stats_batch(
                         client=client,
                         base_url=base_url,
@@ -10856,6 +11930,8 @@ async def run_completion_stats_benchmark(args) -> dict:
                         args=args,
                         state=state,
                         live=live,
+                        items=selected_items,
+                        items_index_base=1,
                     )
                     all_runs.extend(batch)
                     summary = summarize_completion_stats_runs(batch)
@@ -10892,6 +11968,12 @@ async def run_completion_stats_benchmark(args) -> dict:
                 while len(selected_runs) < args.completion_stats_min_results and not _quit_event.is_set():
                     remaining = args.completion_stats_min_results - len(selected_runs)
                     batch_count = max(1, min(max(best_concurrency, 1), remaining))
+                    if selected_items is not None:
+                        items_remaining = len(selected_items) - (next_run_index - 1)
+                        if items_remaining <= 0:
+                            dataset_exhausted = True
+                            break
+                        batch_count = min(batch_count, items_remaining)
                     batch, next_run_index = await run_completion_stats_batch(
                         client=client,
                         base_url=base_url,
@@ -10903,6 +11985,8 @@ async def run_completion_stats_benchmark(args) -> dict:
                         args=args,
                         state=state,
                         live=live,
+                        items=selected_items,
+                        items_index_base=1,
                     )
                     all_runs.extend(batch)
                     selected_runs = [
@@ -10925,6 +12009,42 @@ async def run_completion_stats_benchmark(args) -> dict:
             asdict(r) for r in selected_all
             if (r.correct is False or not r.ok)
         ]
+        accuracy_summary = None
+        category_summaries: list[dict] = []
+        if selected_items is not None:
+            scored_runs = [r for r in all_runs if r.correct is not None]
+            correct_count = len([r for r in scored_runs if r.correct is True])
+            wilson_low, wilson_high = wilson_interval(correct_count, len(scored_runs))
+            accuracy_summary = {
+                "items_total": len(dataset_items),
+                "items_selected": len(selected_items),
+                "attempted": len(all_runs),
+                "scored": len(scored_runs),
+                "correct": correct_count,
+                "accuracy": (correct_count / len(scored_runs)) if scored_runs else 0.0,
+                "wilson95_low": wilson_low,
+                "wilson95_high": wilson_high,
+                "unparseable": len([
+                    r for r in scored_runs
+                    if r.correct is False and r.score_detail == "unparseable"
+                ]),
+                "hit_max_tokens": len([r for r in all_runs if r.hit_max_tokens]),
+                "errors": len([r for r in all_runs if not r.ok]),
+                "dataset_exhausted": dataset_exhausted,
+            }
+            per_category: dict[str, dict] = {}
+            for run in scored_runs:
+                if not run.category:
+                    continue
+                bucket = per_category.setdefault(
+                    run.category, {"category": run.category, "scored": 0, "correct": 0},
+                )
+                bucket["scored"] += 1
+                bucket["correct"] += 1 if run.correct is True else 0
+            category_summaries = [
+                {**bucket, "accuracy": bucket["correct"] / bucket["scored"]}
+                for bucket in sorted(per_category.values(), key=lambda b: b["category"])
+            ]
         report = {
             "metadata": {
                 "version": VERSION,
@@ -10944,6 +12064,7 @@ async def run_completion_stats_benchmark(args) -> dict:
                 "prompt_chars": len(prompt),
                 "timestamp": datetime.now().isoformat(),
                 "max_tokens": args.max_tokens if args.max_tokens > 0 else None,
+                "token_limit_field": token_limit_field,
                 "max_tokens_omitted": args.max_tokens <= 0,
                 "fixed_concurrency": fixed_concurrency,
                 "requested_runs": args.completion_stats_min_results,
@@ -10964,11 +12085,18 @@ async def run_completion_stats_benchmark(args) -> dict:
                 ),
                 "approx_tolerance": (profile or {}).get("approx_tolerance", ""),
                 "dataset_rows": (profile or {}).get("dataset_rows", ""),
-                "dataset_sha256": (profile or {}).get("dataset_sha256", ""),
+                "dataset_sha256": dataset_meta.get("sha256") or (profile or {}).get("dataset_sha256", ""),
+                "dataset": dataset_name,
+                "dataset_path": dataset_meta.get("path", ""),
+                "dataset_source": dataset_meta.get("source", ""),
+                "dataset_items_total": len(dataset_items) if dataset_items else 0,
+                "dataset_items_selected": len(selected_items) if selected_items else 0,
                 "prompt_sha256": (profile or {}).get("prompt_sha256", ""),
                 "prefill_scout": not args.completion_stats_no_prefill_scout,
                 "temperature": args.completion_stats_temperature,
                 "top_p": args.completion_stats_top_p,
+                "request_overrides": (profile or {}).get("request_overrides") or {},
+                "system_prompt": bool((profile or {}).get("system_prompt")),
                 "nvidia_p2p_override_effective": bool(
                     getattr(args, "nvidia_p2p_override", {}).get("effective", False)
                 ),
@@ -10983,6 +12111,8 @@ async def run_completion_stats_benchmark(args) -> dict:
             "selected_summary": selected_summary,
             "all_summary": all_summary,
             "level_summaries": level_summaries,
+            "accuracy": accuracy_summary,
+            "category_summaries": category_summaries,
             "wrong_runs": wrong_runs,
             "hardware_run_summary": summarize_hardware_history(hw_state.hw_history),
             "runs": [
@@ -10993,8 +12123,18 @@ async def run_completion_stats_benchmark(args) -> dict:
                 for r in all_runs
             ],
             "methodology": {
-                "name": "LAVD context consistency test" if (profile or {}).get("scorer") == "ledger_lavd" else "Completion-token statistics",
+                "name": (
+                    "GSM8K accuracy benchmark" if (profile or {}).get("scorer") == "dataset_gsm8k" else
+                    "GPQA Diamond accuracy benchmark" if profile_name == "gpqa-diamond" else
+                    "MMLU-Pro accuracy benchmark" if (profile or {}).get("scorer") == "dataset_mc_letter" else
+                    "LAVD context consistency test" if (profile or {}).get("scorer") == "ledger_lavd" else
+                    "Completion-token statistics"
+                ),
                 "prefill": (
+                    "Dataset accuracy profiles send a different pinned item prompt per "
+                    "measured request, so a shared prefix-cache scout is disabled by "
+                    "default; prompts are short and prefill cost is negligible."
+                    if dataset_name else
                     "This profile keeps the original benchmark logic by default: measured "
                     "CSV requests are sent directly without a prefix-cache scout. Override "
                     "with completion-stats options if you intentionally want scout behavior."
@@ -11018,6 +12158,21 @@ async def run_completion_stats_benchmark(args) -> dict:
                     "and the run is marked estimated_tokens=true."
                 ),
                 "correctness": (
+                    "Each request is scored against its own pinned dataset item. GSM8K: the "
+                    "last number on the final answer line (falling back to the last number in "
+                    "the visible answer) must exactly match the reference final number; "
+                    "thousands separators, $ and % are tolerated. Headline metric is accuracy "
+                    "over scored items with a Wilson 95% interval. Runs are paired per item "
+                    "across configurations via --compare-baseline."
+                    if (profile or {}).get("scorer") == "dataset_gsm8k" else
+                    "Each request is scored against its own pinned dataset item. The chosen "
+                    "option letter is extracted from an 'Answer: X' tag on the final line "
+                    "(falling back to a bare final-line letter, then the last answer tag in "
+                    "the visible text) and must match the reference letter. Headline metric "
+                    "is accuracy over scored items with a Wilson 95% interval, plus "
+                    "per-category accuracy. Runs are paired per item across configurations "
+                    "via --compare-baseline."
+                    if (profile or {}).get("scorer") == "dataset_mc_letter" else
                     "The final answer is parsed from the end of the response as two numbers: "
                     "ticket count and hours. EXACT is 72, 46.0; NEAR is within tolerance; "
                     "FAIL is outside tolerance or unparseable. The 10-slot quality bar is a "
@@ -11788,6 +12943,9 @@ async def run_benchmark(args):
         server_validation = {
             "server_valid": False,
             "server_prompt_tokens": 0,
+            "server_request_prompt_tokens": 0,
+            "server_cached_tokens": 0,
+            "server_token_source": "",
             "server_prefill_time": 0.0,
             "server_tok_per_sec": 0.0,
             "server_prefill_count": 0.0,
@@ -11799,7 +12957,18 @@ async def run_benchmark(args):
         if collect_server_validation:
             probe_metrics = await scrape_metrics(client, base_url)
             collect_server_validation = (
-                has_metric(probe_metrics, metric_name(engine, "prompt_tokens_total"))
+                (
+                    has_metric(
+                        probe_metrics,
+                        metric_name(engine, "prefill_kv_computed_tokens"),
+                    )
+                    or has_metric(
+                        probe_metrics,
+                        metric_name(engine, "prompt_tokens_by_source"),
+                        'source="local_compute"',
+                    )
+                    or has_metric(probe_metrics, metric_name(engine, "prompt_tokens_total"))
+                )
                 and has_metric(probe_metrics, metric_name(engine, "prefill_time_sum"), label_filter)
             )
 
@@ -11838,7 +13007,18 @@ async def run_benchmark(args):
             )
             after = prefill_counter_snapshot(after_metrics, engine)
             d = counter_delta(after, before)
-            prompt_tokens = int(round(d.get("prompt_tokens_total", 0.0)))
+            request_prompt_tokens = int(round(d.get("prompt_tokens_total", 0.0)))
+            kv_computed_tokens = int(round(d.get("prefill_kv_computed_tokens", 0.0)))
+            local_compute_tokens = int(round(d.get("prompt_tokens_local_compute", 0.0)))
+            cached_tokens = int(round(d.get("prompt_tokens_cached", 0.0)))
+            server_token_source = "request_total"
+            prompt_tokens = request_prompt_tokens
+            if engine == ENGINE_VLLM and kv_computed_tokens > 0:
+                prompt_tokens = kv_computed_tokens
+                server_token_source = "kv_computed"
+            elif engine == ENGINE_VLLM and local_compute_tokens > 0:
+                prompt_tokens = local_compute_tokens
+                server_token_source = "local_compute"
             prefill_seconds = d.get("prefill_sum", 0.0)
             prefill_count = d.get("prefill_count", 0.0)
             request_success = d.get("request_success_total", 0.0)
@@ -11848,13 +13028,20 @@ async def run_benchmark(args):
                 and prompt_tokens > 0
                 and prefill_seconds > 0
             )
-            if usage_prompt_tokens is not None and prompt_tokens > 0:
+            if (
+                usage_prompt_tokens is not None
+                and prompt_tokens > 0
+                and server_token_source == "request_total"
+            ):
                 # Treat a different prompt token count as contamination rather
                 # than silently producing a bad prefill rate.
                 valid = valid and abs(prompt_tokens - usage_prompt_tokens) <= 1
             server_validation.update({
                 "server_valid": bool(valid),
                 "server_prompt_tokens": prompt_tokens,
+                "server_request_prompt_tokens": request_prompt_tokens,
+                "server_cached_tokens": cached_tokens,
+                "server_token_source": server_token_source,
                 "server_prefill_time": prefill_seconds,
                 "server_tok_per_sec": (prompt_tokens / prefill_seconds) if valid else 0.0,
                 "server_prefill_count": prefill_count,
@@ -11863,7 +13050,9 @@ async def run_benchmark(args):
             if not valid:
                 server_validation["server_invalid_reason"] = (
                     f"prefill_count={prefill_count}, request_success={request_success}, "
-                    f"prompt_tokens={prompt_tokens}, prefill_seconds={prefill_seconds:.6f}"
+                    f"prompt_tokens={prompt_tokens}, token_source={server_token_source}, "
+                    f"request_prompt_tokens={request_prompt_tokens}, "
+                    f"cached_tokens={cached_tokens}, prefill_seconds={prefill_seconds:.6f}"
                 )
             if valid:
                 tps = prompt_tokens / prefill_seconds
@@ -12053,6 +13242,18 @@ async def run_benchmark(args):
                         server_tps = median(s["server_tok_per_sec"] for s in server_samples) if server_samples else 0.0
                         server_prefill_time = median(s["server_prefill_time"] for s in server_samples) if server_samples else 0.0
                         server_prompt_tokens = int(round(median(s["server_prompt_tokens"] for s in server_samples))) if server_samples else 0
+                        server_request_prompt_tokens = int(round(median(
+                            s.get("server_request_prompt_tokens", 0)
+                            for s in server_samples
+                        ))) if server_samples else 0
+                        server_cached_tokens = int(round(median(
+                            s.get("server_cached_tokens", 0)
+                            for s in server_samples
+                        ))) if server_samples else 0
+                        server_token_source = (
+                            server_samples[0].get("server_token_source", "")
+                            if server_samples else ""
+                        )
                         invalid_reasons = [
                             s.get("server_invalid_reason", "")
                             for s in sample_set
@@ -12070,6 +13271,9 @@ async def run_benchmark(args):
                             "server_tok_per_sec": server_tps,
                             "server_prefill_time": server_prefill_time,
                             "server_prompt_tokens": server_prompt_tokens,
+                            "server_request_prompt_tokens": server_request_prompt_tokens,
+                            "server_cached_tokens": server_cached_tokens,
+                            "server_token_source": server_token_source,
                             "server_samples": len(server_samples),
                             "server_method": "prometheus" if server_samples else "",
                             "server_invalid_reason": invalid_reasons[0] if invalid_reasons else "",
@@ -12222,6 +13426,7 @@ async def run_benchmark(args):
                         request_count=0,
                         warmup_request_count=0,
                         cell_warmup_timeout_seconds=args.cell_warmup_timeout_seconds,
+                        temperature=args.temperature,
                     )
                 finally:
                     state.prefill_contexts = saved_prefill_contexts
@@ -12288,6 +13493,7 @@ async def run_benchmark(args):
                             request_count=args.request_count,
                             warmup_request_count=args.warmup_request_count,
                             cell_warmup_timeout_seconds=args.cell_warmup_timeout_seconds,
+                            temperature=args.temperature,
                         )
                         if result.aggregate_tps == -2:
                             state.results[(ctx, conc)] = -2
@@ -12360,6 +13566,7 @@ async def run_benchmark(args):
                             request_count=measured_requests,
                             warmup_request_count=warmup_requests,
                             cell_warmup_timeout_seconds=args.cell_warmup_timeout_seconds,
+                            temperature=args.temperature,
                         )
                         result.benchmark_mode = "burst-e2e"
                         if result.aggregate_tps == -2:
@@ -12471,7 +13678,8 @@ def print_final_results(results: list, concurrency_levels: list, context_lengths
             "[dim]Client tok/s = prompt_tokens / TTFT. "
             "Integrated scout rows come from the prefix-cache scout request that decode needs anyway. "
             "Server tok/s is optional Prometheus validation when the engine exports "
-            "prefill counters and the exact counter delta is uncontaminated.[/dim]"
+            "prefill counters and the exact counter delta is uncontaminated; for vLLM this "
+            "uses newly computed KV tokens, not request prompt tokens.[/dim]"
         )
         console.print()
 
@@ -12950,6 +14158,9 @@ def save_results(results: list, args, filepath: str, prefill_results: dict = Non
                     "tok_per_sec": round(pr.get("server_tok_per_sec", 0), 0),
                     "prefill_seconds": round(pr.get("server_prefill_time", 0), 3),
                     "prompt_tokens": pr.get("server_prompt_tokens", 0),
+                    "request_prompt_tokens": pr.get("server_request_prompt_tokens", 0),
+                    "cached_tokens": pr.get("server_cached_tokens", 0),
+                    "token_source": pr.get("server_token_source", ""),
                     "samples": pr.get("server_samples", 0),
                     "invalid_reason": pr.get("server_invalid_reason", ""),
                 },
@@ -12996,6 +14207,7 @@ def save_results(results: list, args, filepath: str, prefill_results: dict = Non
             "cell_warmup_timeout_policy": "<=32k:60s,64k:120s,>=128k:180s when override is 0",
             "show_capacity_limited_values": getattr(args, "show_capacity_limited_values", False),
             "max_tokens": args.max_tokens,
+            "temperature": getattr(args, "temperature", None),
             "ignore_eos": not getattr(args, "respect_eos", False),
             "max_total_tokens": args.max_total_tokens,
             "dcp_size": getattr(args, "dcp_size", 1),
@@ -13071,6 +14283,175 @@ def save_results(results: list, args, filepath: str, prefill_results: dict = Non
 
     with open(filepath, "w") as f:
         json.dump(output, f, indent=2)
+
+
+def count_cjk_han(text: str) -> int:
+    count = 0
+    for ch in text:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF
+            or 0x3400 <= cp <= 0x4DBF
+            or 0x20000 <= cp <= 0x2A6DF
+            or 0x2A700 <= cp <= 0x2B73F
+            or 0x2B740 <= cp <= 0x2B81F
+            or 0x2B820 <= cp <= 0x2CEAF
+            or 0xF900 <= cp <= 0xFAFF
+        ):
+            count += 1
+    return count
+
+
+def build_base_url_from_args(args) -> str:
+    if args.host.startswith(("http://", "https://")):
+        base_url = args.host.rstrip("/")
+        if args.port:
+            parsed = urlparse(base_url)
+            if parsed.hostname and parsed.port is None:
+                base_url = f"{parsed.scheme}://{parsed.hostname}:{args.port}{parsed.path}"
+    else:
+        base_url = f"http://{args.host}:{args.port or 5000}"
+    return base_url
+
+
+async def run_coding_peak(args) -> dict:
+    base_url = build_base_url_from_args(args)
+    headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
+    prompt = args.coding_peak_prompt
+    runs = int(args.coding_peak_runs)
+    timeout = httpx.Timeout(None, connect=30.0)
+    samples = []
+    async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
+        for idx in range(1, runs + 1):
+            payload = {
+                "model": args.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": True,
+                "max_tokens": int(args.coding_peak_max_tokens),
+                "stream_options": {
+                    "include_usage": True,
+                    "continuous_usage_stats": True,
+                },
+            }
+            if args.coding_peak_temperature is not None:
+                payload["temperature"] = args.coding_peak_temperature
+            t_start = time.monotonic()
+            t_first = None
+            usage = {}
+            finish_reason = None
+            content_parts = []
+            reasoning_parts = []
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{base_url}/v1/chat/completions",
+                    json=payload,
+                ) as resp:
+                    if resp.status_code >= 400:
+                        body = await resp.aread()
+                        samples.append({
+                            "run": idx,
+                            "ok": False,
+                            "error": f"HTTP {resp.status_code}: {body.decode('utf-8', 'replace')[:500]}",
+                        })
+                        continue
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        if data.get("usage"):
+                            usage = data["usage"]
+                        for choice in data.get("choices", []):
+                            if choice.get("finish_reason") is not None:
+                                finish_reason = choice.get("finish_reason")
+                            delta = choice.get("delta", {})
+                            reasoning = delta.get("reasoning") or delta.get("reasoning_content") or ""
+                            content = delta.get("content") or ""
+                            if reasoning or content:
+                                if t_first is None:
+                                    t_first = time.monotonic()
+                                if reasoning:
+                                    reasoning_parts.append(reasoning)
+                                if content:
+                                    content_parts.append(content)
+            except Exception as exc:
+                samples.append({
+                    "run": idx,
+                    "ok": False,
+                    "error": repr(exc),
+                })
+                continue
+            t_end = time.monotonic()
+            completion_tokens = int(usage.get("completion_tokens") or 0)
+            gen_elapsed = (t_end - t_first) if t_first else 0.0
+            total_elapsed = t_end - t_start
+            content = "".join(content_parts)
+            reasoning = "".join(reasoning_parts)
+            gen_tps = completion_tokens / gen_elapsed if completion_tokens > 0 and gen_elapsed > 0 else 0.0
+            total_tps = completion_tokens / total_elapsed if completion_tokens > 0 and total_elapsed > 0 else 0.0
+            samples.append({
+                "run": idx,
+                "ok": True,
+                "finish_reason": finish_reason,
+                "completion_tokens": completion_tokens,
+                "ttft": (t_first - t_start) if t_first else 0.0,
+                "gen_elapsed": gen_elapsed,
+                "total_elapsed": total_elapsed,
+                "generation_tok_s": gen_tps,
+                "total_tok_s": total_tps,
+                "content_chars": len(content),
+                "reasoning_chars": len(reasoning),
+                "cjk_chars": count_cjk_han(content + reasoning),
+                "content_preview": content[:500],
+            })
+    ok = [s for s in samples if s.get("ok")]
+    rates = [float(s["generation_tok_s"]) for s in ok if s.get("generation_tok_s", 0) > 0]
+    return {
+        "mode": "coding_peak",
+        "prompt": prompt,
+        "runs_requested": runs,
+        "runs_ok": len(ok),
+        "max_tokens": int(args.coding_peak_max_tokens),
+        "temperature": args.coding_peak_temperature,
+        "summary": {
+            "mean_generation_tok_s": mean(rates) if rates else 0.0,
+            "median_generation_tok_s": median(rates) if rates else 0.0,
+            "max_generation_tok_s": max(rates) if rates else 0.0,
+            "min_generation_tok_s": min(rates) if rates else 0.0,
+            "cjk_runs": sum(1 for s in ok if int(s.get("cjk_chars") or 0) > 0),
+        },
+        "samples": samples,
+    }
+
+
+def append_coding_peak_to_report(filepath: str, coding_peak: dict) -> None:
+    path = Path(filepath)
+    if path.exists():
+        with path.open(encoding="utf-8") as fh:
+            report = json.load(fh)
+    else:
+        report = {}
+    report["coding_peak"] = coding_peak
+    methodology = report.setdefault("methodology", {})
+    methodology["coding_peak"] = {
+        "name": "Coding Peak",
+        "present": True,
+        "formula": "usage.completion_tokens / (last_stream_time - first_token_time)",
+        "notes": (
+            "Sequential cc1 Sieve-of-Eratosthenes coding prompt, matching /mnt/test.py "
+            "throughput semantics. Uses OpenAI stream usage with continuous_usage_stats "
+            "when the server supports it."
+        ),
+    }
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
 
 
 # ---------------------------------------------------------------------------
@@ -13238,7 +14619,11 @@ def parse_args():
             "hotel-lights is a compact reasoning test with expected answer 48. "
             "lavd-test is a context consistency test: arithmetic any model can do, but the model must "
             "find human errors in long structured data and understand how to repair them before computing "
-            "ticket count and hours. Setting this implies --completion-stats."
+            "ticket count and hours. "
+            "gsm8k, mmlu-pro, and gpqa-diamond are pinned multi-item accuracy benchmarks (1319 math "
+            "problems / 1000 stratified multiple-choice questions / 198 graduate-level science questions, "
+            "one item per request, temperature 0) intended for quantization A/B comparisons via "
+            "--compare-baseline. Setting this implies --completion-stats."
         )
     )
     parser.add_argument(
@@ -13307,6 +14692,18 @@ def parse_args():
         help="Optional top_p override for --completion-stats requests. Default leaves server/model default unchanged."
     )
     parser.add_argument(
+        "--compare-baseline", default="",
+        help="Path to a previous completion-stats results JSON from the same dataset profile "
+             "(gsm8k, mmlu-pro). After this run finishes, a paired per-item comparison is "
+             "printed and embedded in the output JSON: accuracy delta, correct/wrong flips, "
+             "exact McNemar p-value, per-category deltas, and completion-token inflation."
+    )
+    parser.add_argument(
+        "--compare-candidate", default="",
+        help="Standalone comparison mode: compare --compare-baseline against this results "
+             "JSON and exit without contacting any server. Requires --compare-baseline."
+    )
+    parser.add_argument(
         "--concurrency", default="1,2,4,8,16,32,64,128",
         help="Comma-separated concurrency levels (default: 1,2,4,8,16,32,64,128)"
     )
@@ -13350,8 +14747,35 @@ def parse_args():
              "For C=10 and default 5, the burst sends 50 measured requests. (default: 5)"
     )
     parser.add_argument(
-        "--max-tokens", type=int, default=2048,
-        help="Max tokens to generate per request. In --completion-stats/--profile mode, 0 omits max_tokens from the OpenAI request. (default: 2048)"
+        "--max-tokens", type=int, default=8192,
+        help="Max tokens to generate per request. In --completion-stats/--profile mode, 0 omits max_tokens from the OpenAI request. (default: 8192)"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=None,
+        help="Optional decode request temperature override. Use 0 for deterministic greedy decode. Default leaves the server/model default unchanged."
+    )
+    parser.add_argument(
+        "--coding-peak", action="store_true",
+        help="After the main benchmark, run a sequential cc1 coding prompt peak test "
+             "matching /mnt/test.py throughput semantics and store it under coding_peak."
+    )
+    parser.add_argument(
+        "--coding-peak-runs", type=int, default=5,
+        help="Number of sequential coding peak runs when --coding-peak is enabled. (default: 5)"
+    )
+    parser.add_argument(
+        "--coding-peak-max-tokens", type=int, default=2000,
+        help="Max output tokens per coding peak request. (default: 2000)"
+    )
+    parser.add_argument(
+        "--coding-peak-prompt",
+        default="Write a Python script that implements the Sieve of Eratosthenes.",
+        help="Prompt used by --coding-peak. Default matches /mnt/test.py."
+    )
+    parser.add_argument(
+        "--coding-peak-temperature", type=float, default=None,
+        help="Optional temperature override for --coding-peak. Default sends no "
+             "temperature and uses the server/model default."
     )
     parser.add_argument(
         "--decode-warmup-seconds", type=float, default=3.0,
@@ -13662,6 +15086,10 @@ def parse_args():
             default_max_tokens = profile.get("default_max_tokens")
             if default_max_tokens is not None:
                 args.max_tokens = int(default_max_tokens)
+        if not cli_option_present("--completion-stats-temperature"):
+            default_temperature = profile.get("default_temperature")
+            if default_temperature is not None:
+                args.completion_stats_temperature = float(default_temperature)
         default_concurrency = int(profile.get("default_concurrency") or 0)
         if (
             default_concurrency > 0
@@ -13687,6 +15115,13 @@ def parse_args():
             and not cli_option_present("--completion-stats-no-prefill-scout")
         ):
             args.completion_stats_no_prefill_scout = True
+    if args.compare_candidate and not args.compare_baseline:
+        parser.error("--compare-candidate requires --compare-baseline")
+    if args.compare_baseline and not args.compare_candidate and not args.completion_stats:
+        parser.error(
+            "--compare-baseline needs a completion-stats/test-profile run to compare against, "
+            "or --compare-candidate for a standalone two-file comparison"
+        )
     if args.completion_stats_runs < 0:
         parser.error("--completion-stats-runs/--profile-runs must be >= 0")
     if args.completion_stats_concurrency < 0:
@@ -13695,6 +15130,10 @@ def parse_args():
         parser.error("--max-tokens must be >= 0")
     if args.max_tokens == 0 and not args.completion_stats:
         parser.error("--max-tokens 0 is only valid with --completion-stats/--profile; decode matrix needs a positive generation length")
+    if args.coding_peak_runs < 1:
+        parser.error("--coding-peak-runs must be >= 1")
+    if args.coding_peak_max_tokens < 1:
+        parser.error("--coding-peak-max-tokens must be >= 1")
     if args.completion_stats_runs > 0:
         args.completion_stats_min_results = args.completion_stats_runs
     if args.completion_stats_min_results < 1:
@@ -13723,6 +15162,38 @@ def main():
     console = Console()
     check_for_update(console)
     args = parse_args()
+    if args.compare_candidate:
+        try:
+            with open(args.compare_baseline, "r", encoding="utf-8") as fh:
+                baseline_report = json.load(fh)
+            with open(args.compare_candidate, "r", encoding="utf-8") as fh:
+                candidate_report = json.load(fh)
+        except Exception as exc:
+            console.print(f"[red]Cannot load comparison inputs: {exc}[/red]")
+            sys.exit(1)
+        comparison = build_paired_comparison(
+            baseline_report,
+            candidate_report,
+            baseline_label=args.compare_baseline,
+            candidate_label=args.compare_candidate,
+        )
+        print_paired_comparison(comparison, console)
+        if cli_option_present("--output"):
+            output = {
+                "metadata": {
+                    "version": VERSION,
+                    "mode": "paired_comparison",
+                    "timestamp": datetime.now().isoformat(),
+                    "baseline_path": args.compare_baseline,
+                    "candidate_path": args.compare_candidate,
+                },
+                "comparison": comparison,
+            }
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(output, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            console.print(f"\n[green]Comparison saved to {args.output}[/green]")
+        return
     args.nvidia_p2p_override = detect_nvidia_p2p_override()
     if not args.amd_fabric_only or args.p2pmark:
         print_p2p_override_status(console, args.nvidia_p2p_override)
@@ -13758,9 +15229,32 @@ def main():
 
     if args.completion_stats:
         start_keyboard_listener(soft_quit=True)
+        profile_config = BUILTIN_TEST_PROFILES.get(args.test_profile or "", {})
+        dataset_name = str(profile_config.get("dataset") or "")
+        dataset_line = ""
+        if dataset_name:
+            try:
+                dataset_items, dataset_meta = load_benchmark_dataset_items(
+                    args.test_profile, profile_config, console=console,
+                )
+            except Exception as exc:
+                console.print(f"[red]{exc}[/red]")
+                sys.exit(1)
+            args.completion_stats_dataset_items = dataset_items
+            args.completion_stats_dataset_meta = dataset_meta
+            if args.completion_stats_runs <= 0 and not cli_option_present("--completion-stats-min-results"):
+                args.completion_stats_runs = len(dataset_items)
+                args.completion_stats_min_results = len(dataset_items)
+            elif args.completion_stats_min_results > len(dataset_items):
+                args.completion_stats_min_results = len(dataset_items)
+                if args.completion_stats_runs > len(dataset_items):
+                    args.completion_stats_runs = len(dataset_items)
+            dataset_line = (
+                f"Dataset: {dataset_name} ({len(dataset_items)} items, "
+                f"sha256 {str(dataset_meta.get('sha256') or '')[:16]}…)\n"
+            )
         fixed_c = args.completion_stats_concurrency
         requested_runs = args.completion_stats_runs or args.completion_stats_min_results
-        profile_config = BUILTIN_TEST_PROFILES.get(args.test_profile or "", {})
         prompt_label = (
             f"profile:{args.test_profile}" if args.test_profile else
             (args.prompt_file or ("inline --prompt" if args.prompt else "custom"))
@@ -13772,6 +15266,9 @@ def main():
         config_title = (
             "LAVD Context Consistency Test" if args.test_profile == "lavd-test" else
             "Hotel Lights Reasoning Test" if args.test_profile == "hotel-lights" else
+            "GSM8K Accuracy Benchmark" if args.test_profile == "gsm8k" else
+            "MMLU-Pro Accuracy Benchmark" if args.test_profile == "mmlu-pro" else
+            "GPQA Diamond Accuracy Benchmark" if args.test_profile == "gpqa-diamond" else
             "Completion Token Statistics Benchmark"
         )
         score_label = (
@@ -13779,15 +15276,23 @@ def main():
             if profile_config.get("scorer") == "ledger_lavd" else
             "EXACT / FAIL final number"
             if profile_config.get("scorer") == "numeric_exact" else
+            "per-item final number vs GSM8K reference"
+            if profile_config.get("scorer") == "dataset_gsm8k" else
+            "per-item option letter vs dataset reference"
+            if profile_config.get("scorer") == "dataset_mc_letter" else
             (args.completion_stats_correct_regex or "disabled")
+        )
+        compare_line = (
+            f"\nCompare baseline: {args.compare_baseline}" if args.compare_baseline else ""
         )
         console.print(Panel(
             f"[bold {PHOSPHOR}]{config_title}[/bold {PHOSPHOR}]\n"
             f"Model: {args.model} @ {args.host if args.host.startswith('http') else f'{args.host}:{args.port or 5000}'}\n"
             f"Prompt: {prompt_label}\n"
+            f"{dataset_line}"
             f"Concurrency: {fixed_c if fixed_c > 0 else 'adaptive ' + args.completion_stats_concurrency_levels}\n"
             f"Measured runs: {requested_runs} | Max tokens: {max_tokens_label}\n"
-            f"Scoring: {score_label}",
+            f"Scoring: {score_label}{compare_line}",
             title=render_title("Configuration"),
             box=PANEL_BOX,
             border_style=FRAME_BORDER,
@@ -13797,7 +15302,23 @@ def main():
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted by user; completion-stats report was not finalized.[/yellow]")
             return
+        comparison = None
+        if args.compare_baseline:
+            try:
+                with open(args.compare_baseline, "r", encoding="utf-8") as fh:
+                    baseline_report = json.load(fh)
+                comparison = build_paired_comparison(
+                    baseline_report,
+                    report,
+                    baseline_label=args.compare_baseline,
+                    candidate_label="this run",
+                )
+                report["comparison"] = comparison
+            except Exception as exc:
+                console.print(f"[red]Paired comparison against {args.compare_baseline} failed: {exc}[/red]")
         print_completion_stats_results(report, console)
+        if comparison is not None:
+            print_paired_comparison(comparison, console)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
             f.write("\n")
@@ -13868,6 +15389,25 @@ def main():
             hardware_run_summary=getattr(args, "hardware_run_summary", {}),
         )
         save_results(results, args, args.output, prefill_results, engine=engine, burst_results=burst_results)
+        if args.coding_peak:
+            console.print("\n[bold cyan]Running coding peak cc1 probe...[/bold cyan]")
+            coding_peak = asyncio.run(run_coding_peak(args))
+            append_coding_peak_to_report(args.output, coding_peak)
+            summary = coding_peak.get("summary", {})
+            table = Table(title="Coding Peak", box=TABLE_BOX)
+            table.add_column("runs")
+            table.add_column("median tok/s", justify="right")
+            table.add_column("mean tok/s", justify="right")
+            table.add_column("max tok/s", justify="right")
+            table.add_column("CJK runs", justify="right")
+            table.add_row(
+                f"{coding_peak.get('runs_ok', 0)}/{coding_peak.get('runs_requested', 0)}",
+                f"{summary.get('median_generation_tok_s', 0.0):.1f}",
+                f"{summary.get('mean_generation_tok_s', 0.0):.1f}",
+                f"{summary.get('max_generation_tok_s', 0.0):.1f}",
+                str(summary.get("cjk_runs", 0)),
+            )
+            console.print(table)
         console.print(f"\n[green]Results saved to {args.output}[/green]")
     else:
         console.print("[red]No results collected.[/red]")

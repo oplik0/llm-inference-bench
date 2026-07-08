@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.26 - 2026-07-06
+
+### GPQA Diamond profile
+
+- Added `--test-profile gpqa-diamond` (aliases `gpqa`, `gpqa_diamond`): all 198 graduate-level GPQA Diamond science questions (CC BY 4.0) as a frontier-difficulty accuracy anchor, scored by exact option-letter match with per-category (biology/chemistry/physics) accuracy and the same paired `--compare-baseline` support as gsm8k/mmlu-pro.
+- Options are assigned to letters by a deterministic per-item shuffle seeded by the GPQA record id, so letter assignments and item ids are identical on every machine and across runs.
+- Respecting the GPQA anti-contamination terms, the dataset is never stored in this repository: the official password-protected `dataset.zip` is downloaded from `idavidrein/gpqa` on first use, the archive and the derived canonical JSONL are both sha256-pinned, and the JSONL is cached under `~/.cache/llm_decode_bench/datasets/` only. A `.gitignore` entry guards against committing a local copy.
+- Defaults match the other dataset profiles: temperature 0, `max_tokens` 32768, fixed concurrency 30, all 198 items (deterministic evenly-spread subset via `--profile-runs N`).
+
+## 0.4.25 - 2026-07-06
+
+### Dataset accuracy profiles and paired comparison
+
+- Added `--test-profile gsm8k`: the full official GSM8K test split (1319 grade-school math problems, MIT license) as a multi-item accuracy benchmark. Every measured request is a different problem; scoring is exact final-number match with tolerant parsing (thousands separators, `$`/`%`, trailing punctuation).
+- Added `--test-profile mmlu-pro`: a pinned deterministic stratified 1000-question subset of the TIGER-Lab/MMLU-Pro test split (Apache-2.0), shipped in `data/mmlu_pro_1000.jsonl` (largest-remainder allocation per category, floor-stride by `question_id`). Scoring is exact option-letter match with tolerant `Answer: <letter>` extraction; the report adds per-category accuracy.
+- Datasets are sha256-pinned and resolved from `data/` next to the script, then `~/.cache/llm_decode_bench/datasets/`, then downloaded from the pinned source and verified; a hash mismatch is a hard error so runs on different machines always measure identical item sets.
+- Dataset profiles default to temperature 0, `max_tokens` 32768 (common reasoning-model eval budget; a healthy baseline should essentially never truncate, so candidate `max_tokens` hits read as degradation, not artifacts), fixed concurrency 30, no prefix-cache scout, and all dataset items; `--profile-runs N` selects a deterministic evenly-spread N-item subset that stays identical across runs.
+- Completion-stats machinery now supports per-item requests: run records carry `item_id`, `category`, expected/parsed answers, and the report gains an `accuracy` block (correct/scored, accuracy, Wilson 95% interval, unparseable count) plus `category_summaries`.
+- Added `--compare-baseline`: after a dataset-profile run, results are paired per item id against a previous results JSON and the report/console gain accuracy deltas with Wilson intervals, correct/wrong flip counts and flip item ids, a two-sided exact McNemar p-value, per-category deltas, completion-token inflation, and `max_tokens`-hit counts.
+- Added standalone `--compare-baseline a.json --compare-candidate b.json` comparison mode that runs without contacting any server.
+- These profiles are intended as quantization-degradation anchors (e.g. GLM NVFP4 `w4a16` vs `w4a4`): run the same profile against each endpoint with identical engine flags and compare paired; the README documents the noise-floor protocol (same-endpoint self-comparison first).
+
+### Completion-token profiles
+
+- Added `--test-profile estonia-long`, which reuses the built-in Estonia prompt with a generic high-reasoning-effort system message and wrapper. It is intended to test whether models avoid premature short unknown/wrong answers without task-specific chain or decoy hints, uses `max_completion_tokens`, and sends MiMo `thinking.enabled` as a request override.
+
 ## 0.4.18 - 2026-05-15
 
 ### Decode warmup

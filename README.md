@@ -23,6 +23,8 @@ Supports **SGLang** and **vLLM** engines (auto-detected). Works with any OpenAI-
 - **Event log** — right-side live history of warmup, readiness, skips, and cell completion while the dashboard redraws
 - **Prefill measurement** — integrated decode scout prefill by default, using client `prompt_tokens / TTFT`, with optional standalone cold-prefill profiling and live ETA for long-prefill rows
 - **Completion-token statistics mode** — adaptive task benchmark for long-answer quality/token-efficiency tests such as GLM dense MLA vs NSA; warms prefill once, finds the fastest decode concurrency, then collects completion-token distributions
+- **Dataset accuracy profiles** — pinned GSM8K (1319 items), stratified MMLU-Pro (1000 items), and GPQA Diamond (198 items) benchmarks with per-item scoring, Wilson confidence intervals, and per-category accuracy, designed to measure quantization degradation (e.g. NVFP4 w4a16 vs w4a4)
+- **Paired A/B comparison** — `--compare-baseline` pairs two runs per item and reports accuracy delta, correct/wrong flips, exact McNemar significance, per-category deltas, and completion-token inflation
 - **Effective concurrency detection** — shows `(X/Y)*` when the server cannot actually run all requested concurrent requests
 - **Dynamic warmup** — uses scheduler metrics when available, with an OpenAI stream fallback when `/metrics` is disabled
 - **JSON output** — structured results saved to `benchmark_results.json` for further analysis
@@ -76,11 +78,47 @@ llm-decode-bench --port 8001 --model GLM-5 \
     --profile-runs 30 \
     --max-tokens 40000
 
+# Same Estonia task with a generic high-reasoning-effort wrapper
+python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+    --test-profile estonia-long \
+    --profile-concurrency 8 \
+    --profile-runs 30 \
+    --max-tokens 40000
+
 # Adaptive completion-token statistics profile search
 llm-decode-bench --port 8001 --model GLM-5 \
     --test-profile estonia \
     --completion-stats-concurrency-levels 1,2,4,8,16,30 \
     --completion-stats-min-results 30
+
+# GSM8K accuracy benchmark (full pinned 1319-item test set, temperature 0)
+python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+    --test-profile gsm8k
+
+# MMLU-Pro accuracy benchmark (pinned stratified 1000-question subset)
+python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+    --test-profile mmlu-pro
+
+# GPQA Diamond accuracy benchmark (198 graduate-level science questions;
+# fetched from the official password-protected zip on first use, cached locally)
+python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+    --test-profile gpqa-diamond
+
+# Quantization A/B: run the baseline quant first, then the candidate with a
+# paired per-item comparison (accuracy delta, flips, exact McNemar p-value)
+python3 llm_decode_bench.py --port 8001 --model GLM-5-w4a16 \
+    --test-profile gsm8k --output gsm8k_w4a16.json
+python3 llm_decode_bench.py --port 8002 --model GLM-5-w4a4 \
+    --test-profile gsm8k --output gsm8k_w4a4.json \
+    --compare-baseline gsm8k_w4a16.json
+
+# Standalone paired comparison of two earlier result files (no server needed)
+python3 llm_decode_bench.py \
+    --compare-baseline gsm8k_w4a16.json --compare-candidate gsm8k_w4a4.json
+
+# Quick subset run (evenly-spread deterministic 200-item slice)
+python3 llm_decode_bench.py --port 8001 --model GLM-5 \
+    --test-profile mmlu-pro --profile-runs 200
 
 # Remote API with authentication (OpenRouter, Together AI, etc.)
 llm-decode-bench --host https://openrouter.ai --api-key sk-or-... --model meta-llama/llama-3-70b
@@ -121,7 +159,9 @@ llm-decode-bench --amd-fabric-only
 | `--burst-request-count` | `0` | Measured requests per Burst / E2E cell. `0` means `concurrency × --burst-requests-per-concurrency` |
 | `--burst-warmup-request-count` | `0` | Warmup requests per Burst / E2E cell. `0` means `concurrency` |
 | `--burst-requests-per-concurrency` | `5` | Auto Burst / E2E measured request multiplier |
-| `--test-profile` | | Built-in task profile. `estonia` embeds the GLM long-context prompt inside the script and implies `--completion-stats` |
+| `--test-profile` | | Built-in task profile. `estonia` embeds the GLM long-context prompt inside the script and implies `--completion-stats`. `gsm8k` and `mmlu-pro` are pinned multi-item accuracy benchmarks for quantization A/B tests |
+| `--compare-baseline` | | Path to a previous dataset-profile results JSON; after the run, a paired per-item comparison (accuracy delta, flips, exact McNemar p, per-category deltas, token inflation) is printed and embedded in the output JSON |
+| `--compare-candidate` | | Standalone mode: compare `--compare-baseline` against this results JSON and exit without contacting a server |
 | `--profile-concurrency` | `0` | Fixed task-profile concurrency. `0` keeps adaptive probing |
 | `--profile-runs` | `0` | Fixed task-profile measured request count. `0` uses `--completion-stats-min-results` |
 | `--completion-stats` | `false` | Run adaptive completion-token statistics mode instead of the decode matrix |
@@ -248,7 +288,12 @@ of a full matrix accidentally.
 ### Completion-Token Statistics
 
 `--test-profile estonia` is the built-in long-answer task benchmark for the
-GLM-5.1 dense MLA vs NSA style test. The long prompt is embedded directly in
+GLM-5.1 dense MLA vs NSA style test. `--test-profile estonia-long` uses the same
+task with a generic high-reasoning-effort system message and wrapper that ask
+the model to do a slower private pass and verification pass before answering,
+without adding task-specific chain or decoy hints. It uses
+`max_completion_tokens` for the generation cap and sends MiMo `thinking.enabled`
+as a profile request override. The long prompt is embedded directly in
 `llm_decode_bench.py` as a compressed blob, so the benchmark can be run from a
 single script without copying `testLuke5.txt` around. The important questions are:
 
@@ -272,10 +317,10 @@ llm-decode-bench --port 8001 --model GLM-5 \
     --profile-runs 30
 ```
 
-Without explicit profile controls, `estonia` defaults to `--profile-concurrency
-30 --profile-runs 30`; override these when the server cannot fit that much
-parallel work or when you want a smaller diagnostic run. The example above sends
-exactly 30 measured requests with up to 8 requests in flight. The
+Without explicit profile controls, `estonia` and `estonia-long` default to
+`--profile-concurrency 30 --profile-runs 30`; override these when the server
+cannot fit that much parallel work or when you want a smaller diagnostic run.
+The example above sends exactly 30 measured requests with up to 8 requests in flight. The
 live display shows the scout request, queued/launched/active request counts,
 active stream elapsed time, estimated live tokens, estimated live tok/s, recent
 final answers/excerpts, running completion-token percentiles, correctness rate,
@@ -303,15 +348,91 @@ Correctness is scored by default from the final non-empty answer line using
 methodology where mentioning the right country during reasoning is not enough.
 
 If `--max-tokens` is not explicitly provided in this mode, the tool defaults to
-the built-in profile default, currently `40000` for `estonia`. Override it for
-shorter tasks. `--prompt` and `--prompt-file` remain available for custom
-completion-token statistics, but the reproducible bundled task should use
-`--test-profile estonia`.
+the built-in profile default, currently `40000` for `estonia` and
+`estonia-long`. Override it for shorter tasks. `--prompt` and `--prompt-file`
+remain available for custom completion-token statistics, but the reproducible
+bundled task should use `--test-profile estonia` or `--test-profile
+estonia-long`.
 
 If SGLang is running with DCP/CP and `/get_server_info` reports only the local KV
 budget, pass `--dcp-size N` or set `LLM_BENCH_DCP_SIZE=N`. For example, a local
 `max_total_num_tokens=200000` with `--dcp-size 4` is displayed and treated as an
 effective `800000` token KV budget.
+
+### Dataset Accuracy Profiles (gsm8k, mmlu-pro, gpqa-diamond)
+
+`--test-profile gsm8k`, `--test-profile mmlu-pro`, and `--test-profile
+gpqa-diamond` are multi-item accuracy benchmarks built on the completion-stats
+machinery. Instead of repeating one prompt, every measured request is a
+**different pinned dataset item**, so the reported correctness rate is dataset
+accuracy, not a resample pass-rate. They are intended as sensitive, externally
+comparable anchors for quantization and engine A/B tests (for example NVFP4
+`w4a16` vs `w4a4` of the same checkpoint).
+
+Datasets are pinned by sha256 and resolved in this order: `data/<file>` next to
+the script, `~/.cache/llm_decode_bench/datasets/`, then download from the pinned
+source with hash verification. A hash mismatch is a hard error, so two machines
+can never silently measure different item sets.
+
+- `gsm8k` — the full official GSM8K test split (1319 grade-school math word
+  problems, MIT license, downloaded verbatim from `openai/grade-school-math`).
+  The model is asked to end with the final number alone on the last line;
+  scoring is exact final-number match (thousands separators, `$`/`%` and
+  trailing punctuation are tolerated). Multi-step generation makes this the
+  most quantization-sensitive standard task benchmark that is still trivially
+  verifiable.
+- `mmlu-pro` — a deterministic stratified 1000-question subset of the
+  TIGER-Lab/MMLU-Pro test split (Apache-2.0), proportional per category via
+  largest remainder, floor-stride by `question_id` inside each category,
+  shipped in `data/mmlu_pro_1000.jsonl`. Up to 10 options per question; the
+  model must end with `Answer: <letter>`; scoring is exact letter match with
+  tolerant extraction (bold/parenthesised tags, bare final-line letters,
+  last-tag-wins fallback in the visible text). The report includes
+  per-category accuracy.
+- `gpqa-diamond` — all 198 graduate-level "Google-proof" science questions of
+  the GPQA Diamond split (CC BY 4.0; biology, chemistry, physics), 4 options
+  per question assigned by a deterministic per-item shuffle (seeded by record
+  id, identical on every machine), same `Answer: <letter>` scoring as
+  `mmlu-pro`. This is the frontier-difficulty anchor; with only 198 items its
+  statistical resolution is coarse (~±5 pp paired), so read it alongside
+  `gsm8k` and `mmlu-pro`. The GPQA authors distribute the dataset as a
+  password-protected zip and ask that plaintext never be republished online
+  (anti-contamination), so this dataset is **not** shipped in `data/`: the
+  official zip is downloaded on first use (both the archive and the derived
+  JSONL are sha256-pinned) and cached under
+  `~/.cache/llm_decode_bench/datasets/` only. `.gitignore` guards against
+  committing a local copy; please keep it out of public repos.
+
+All dataset profiles default to temperature 0, `max_tokens` 32768 (matching common
+reasoning-model eval budgets, so a healthy baseline essentially never
+truncates; override with `--max-tokens`), fixed concurrency 30, no
+prefix-cache scout (prompts are unique), and **all dataset items**.
+`--profile-runs N` selects a deterministic evenly-spread N-item subset — the
+same N items every run, so subsets stay comparable across configurations.
+Item-level results (`item_id`, expected/parsed answer, per-item correctness,
+tokens) are stored in the output JSON. The headline metric is accuracy with a
+Wilson 95% interval; completion-token percentiles and `max_tokens` hits are
+reported alongside as early damage signals (a damaged quant usually inflates
+reasoning tokens before accuracy visibly drops).
+
+### Paired A/B Comparison
+
+`--compare-baseline previous.json` (with a dataset-profile run) or the
+standalone `--compare-baseline a.json --compare-candidate b.json` mode pairs
+runs **per item id** and reports: accuracy for both sides with Wilson 95%
+intervals, the accuracy delta, the exact item flips (correct only in baseline
+vs only in candidate), a two-sided exact McNemar p-value over the discordant
+pairs, per-category deltas (worst first), completion-token inflation, and
+`max_tokens`-hit counts. The comparison is embedded under `comparison` in the
+output JSON, including flip item ids for drill-down.
+
+Recommended protocol for quantization comparisons: keep the engine version and
+flags identical between runs, change only the checkpoint/quant config; run the
+full item set on each endpoint; run the profile twice against the *same*
+endpoint first — that self-flip rate is the noise floor (temperature 0 does not
+guarantee bitwise determinism under batching) that a real degradation must
+exceed. Paired McNemar statistics resolve roughly 1–2 pp differences on the
+full GSM8K set; a 30-run single-prompt profile cannot.
 
 ### Client Latency Metrics
 
