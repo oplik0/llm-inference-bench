@@ -403,11 +403,13 @@ can never silently measure different item sets.
   `~/.cache/llm_decode_bench/datasets/` only. `.gitignore` guards against
   committing a local copy; please keep it out of public repos.
 
-All dataset profiles default to temperature 0, `max_tokens` 65536 (a generous
+All dataset profiles default to temperature 0, `max_tokens` 131072 (a generous
 reasoning budget so a healthy baseline essentially never truncates and
 candidate `max_tokens` hits read as degradation; override with
 `--max-tokens`), fixed concurrency 30, no prefix-cache scout (prompts are
-unique), and **all dataset items**.
+unique), and **all dataset items**. If your server's `max_model_len` is at or
+below 128k, engines like vLLM reject requests whose prompt + `max_tokens`
+exceed the context window — pass a smaller `--max-tokens` in that case.
 `--profile-runs N` selects a deterministic evenly-spread N-item subset — the
 same N items every run, so subsets stay comparable across configurations.
 Item-level results (`item_id`, expected/parsed answer, per-item correctness,
@@ -415,6 +417,18 @@ tokens) are stored in the output JSON. The headline metric is accuracy with a
 Wilson 95% interval; completion-token percentiles and `max_tokens` hits are
 reported alongside as early damage signals (a damaged quant usually inflates
 reasoning tokens before accuracy visibly drops).
+
+A request that hits the `max_tokens` limit while a thinking model is still
+reasoning — and therefore never emits an answer — is scored as **TRUNCATED**
+(glyph `⊘`), a distinct category from **unparseable (format)**, which is when
+the model *did* answer but the letter/number could not be read. Both still
+count as wrong, but TRUNCATED is a token-budget artifact, not a model failure:
+the report shows the count explicitly (`truncated (no answer)` and a
+`hit max_tokens` breakdown of how many produced no answer vs answered before
+the cap) so a high number is an unambiguous signal to raise `--max-tokens`
+rather than a misleading "unparseable". Because a damaged quant tends to think
+longer, a rising TRUNCATED count between two runs is itself a degradation
+signal, and the paired comparison reports it per side.
 
 ### Paired A/B Comparison
 
